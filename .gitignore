@@ -27,8 +27,7 @@ output/meme_analysis/**/sequences.tsv*
 output/meme_analysis/**/sequences.*
 
 # Large generated tables (optional - keep if you prefer not to version outputs)
-output/*.tsv
-output/*.csv
+# (specific large derived files under output/meme_analysis remain excluded)
 
 # Local environment
 .Renviron
