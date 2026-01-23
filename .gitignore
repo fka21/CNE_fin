@@ -1,0 +1,40 @@
+# Recommended .gitignore for CNE_fin
+
+# R / RStudio
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# macOS
+.DS_Store
+
+# Python / Jupyter
+.ipynb_checkpoints/
+
+# Excel files (often large, keep out of repo unless needed)
+*.xlsx
+*.xls
+
+# Large or derived data (adjust as needed)
+ancilliary_files/drer.fa
+ancilliary_files/drer.gff
+ancilliary_files/drer.fa.fai
+ancilliary_files/danRer11ToGCF_049306965.1.over.chain
+
+# AME/MEME large sequence outputs
+output/meme_analysis/**/sequences.tsv*
+output/meme_analysis/**/sequences.*
+
+# Large generated tables (optional - keep if you prefer not to version outputs)
+output/*.tsv
+output/*.csv
+
+# Local environment
+.Renviron
+.env
+
+# Temp / logs
+tmp/
+*.tmp
+*.log

@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  shiny:
+    # build from project root so Dockerfile can COPY the entire repo
+    build:
+      context: ..
+      dockerfile: shiny_app/Dockerfile
+    ports:
+      - "3838:3838"
+    restart: unless-stopped
+    environment:
+      - TZ=UTC

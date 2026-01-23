@@ -1,0 +1,32 @@
+MEME Motif Enrichment Analysis Summary
+======================================
+Generated: Wed Jan 14 09:33:40 CET 2026
+
+Input Files:
+  Vertebrata CNEs: /Users/ferenc.kagan/Documents/Projects/CNE_fin/input/vertebrata_cne.bed
+  Teleostei CNEs: /Users/ferenc.kagan/Documents/Projects/CNE_fin/input/teleostei_cne.bed
+  Reference Genome: /Users/ferenc.kagan/Documents/Projects/CNE_fin/ancilliary_files/drer.fa
+
+Analysis Details:
+  - Analysis Method: AME (Analysis of Motif Enrichment)
+  - Motif Database: input/jaspar_vertebrate_pwm.meme
+  - Docker image: memesuite/memesuite:latest
+
+Output Files:
+  Vertebrata Enrichment Results: /Users/ferenc.kagan/Documents/Projects/CNE_fin/output/meme_analysis/vertebrata_motifs/ame_output/
+  Teleostei Enrichment Results: /Users/ferenc.kagan/Documents/Projects/CNE_fin/output/meme_analysis/teleostei_motifs/ame_output/
+  Enrichment Comparison: /Users/ferenc.kagan/Documents/Projects/CNE_fin/output/meme_analysis/motif_comparison/enrichment_comparison.txt
+  Extracted Sequences: 
+    - /Users/ferenc.kagan/Documents/Projects/CNE_fin/output/meme_analysis/vertebrata_motifs/vertebrata_cne.fa
+    - /Users/ferenc.kagan/Documents/Projects/CNE_fin/output/meme_analysis/teleostei_motifs/teleostei_cne.fa
+
+Next Steps:
+1. Review ame.html in each ame_output/ directory for interactive results
+2. Check ame.tsv for detailed enrichment p-values and fold changes
+3. Compare enrichment_comparison.txt for top motifs in each dataset
+4. Investigate specific enriched motifs for functional roles in fin development
+
+For detailed results, see:
+  - ame.html files in each ame_output directory
+  - ame.tsv for complete enrichment statistics (p-value, E-value, fold change)
+  - enrichment_comparison.txt for top 10 motifs comparison

@@ -1,0 +1,38 @@
+501  wget -O danRer11ToGCF_049306965.1.over.chain.gz   https://hgdownload.gi.ucsc.edu/goldenPath/danRer11/liftOver/danRer11ToGCF_049306965.1.over.chain.gz
+  502  gunzip -f danRer11ToGCF_049306965.1.over.chain.gz
+  503  conda create -n liftover bioconda::ucsc-liftover
+  504  conda activate liftover
+  505  ls ../input/
+  506  less -S ../input/Chan_et_al_EP-loops.tsv 
+  507  head ../input/Chan_et_al_EP-loops.tsv 
+  508  less danRer11ToGCF_049306965.1.over.chain 
+  509  head ../input/Chan_et_al_EP-loops.tsv 
+  510  head danRer11ToGCF_049306965.1.over.chain 
+  511  in=../input/Chan_et_al_EP-loops.tsv
+  512  # Set these:
+  513  ADD_CHR_PREFIX=1    # 1 => make chr1, chr2... ; 0 => keep as "1"
+  514  END_IS_INCLUSIVE=1  # 1 => treat TSV end as inclusive; 0 => treat TSV end as exclusive already
+  515  awk -v OFS="\t"     -v addchr="$ADD_CHR_PREFIX"     -v end_incl="$END_IS_INCLUSIVE" 'NR==1 {next}  # skip header
+{
+  chr=$1
+  if (addchr==1) chr="chr"chr
+
+  pS=$2; pE=$3
+  eS=$4; eE=$5
+  gene=$7
+  id=sprintf("row%07d|%s, NR-1, gene)
+
+  # BED start is 0-based
+  pS0=pS-1
+  eS0=eS-1
+
+  # if TSV end is inclusive, BED end should be end (inclusive) + 1
+  if (end_incl==1) { pE1=pE; eE1=eE; pE1=pE+0; eE1=eE+0; pE_bed=pE+1; eE_bed=eE+1 }
+  else             { pE_bed=pE;   eE_bed=eE }
+
+  print chr, pS0, pE_bed, id > "promoter.grcz11.bed"
+  print chr, eS0, eE_bed, id > "enhancer.grcz11.bed"
+}' "$in"
+  516  head promoter.grcz11.bed 
+  517  head enhancer.grcz11.bed 
+  518  chain=danRer11T
