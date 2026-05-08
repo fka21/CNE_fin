@@ -1,0 +1,1 @@
+seqnames	start	end	width	strand	phastcons	annotation	geneChr	geneStart	geneEnd	geneLength	geneStrand	geneId	transcriptId	distanceToTSS	flank_txIds	flank_geneIds	flank_gene_distances	gene_name	mean_tpm	z_fpkm	is_active	flank_mean_tpm	flank_z_fpkm	flank_is_active
