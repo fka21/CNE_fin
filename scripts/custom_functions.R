@@ -346,7 +346,7 @@ plot_gviz_zoom <- function(
   ctrack <- AnnotationTrack(
     teleost_of_interest,
     chromosome = chr,
-    name = "Teleost\nCNEs",
+    name = "Actinopteriigy\nCNEs",
     fill = teleost_fill,
     background.title = background_title
   )
@@ -354,7 +354,7 @@ plot_gviz_zoom <- function(
   vtrack <- AnnotationTrack(
     verte_of_interest,
     chromosome = chr,
-    name = "Vertebrate\nCNEs",
+    name = "Gnathostomata\nCNEs",
     fill = verte_fill,
     background.title = background_title
   )

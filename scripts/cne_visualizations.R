@@ -380,3 +380,48 @@ plot_gviz_zoom(
   verte_fill = verte_line,
   atac_fill = atac_line
 )
+
+plot_gviz_zoom(
+  gr = gr,
+  chr = "chr18",
+  start = 39.5e6,
+  end = 40.5e6,
+  filepath = '../output/chr18_gviz_zoom.pdf',
+  height = 10,
+  gene_activity = gene_activity,
+  active_col = "royalblue",
+  inactive_col = "skyblue",
+  teleost_fill = teleost_line,
+  verte_fill = verte_line,
+  atac_fill = atac_line
+)
+
+plot_gviz_zoom(
+  gr = gr,
+  chr = "chr9",
+  start = 39.5e6,
+  end = 40.5e6,
+  filepath = '../output/chr9_gviz_zoom.pdf',
+  height = 10,
+  gene_activity = gene_activity,
+  active_col = "royalblue",
+  inactive_col = "skyblue",
+  teleost_fill = teleost_line,
+  verte_fill = verte_line,
+  atac_fill = atac_line
+)
+
+plot_gviz_zoom(
+  gr = gr,
+  chr = "chr19",
+  start = 39e6,
+  end = 41e6,
+  filepath = '../output/chr19_gviz_zoom.pdf',
+  height = 10,
+  gene_activity = gene_activity,
+  active_col = "royalblue",
+  inactive_col = "skyblue",
+  teleost_fill = teleost_line,
+  verte_fill = verte_line,
+  atac_fill = atac_line
+)
