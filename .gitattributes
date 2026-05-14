@@ -1,0 +1,2 @@
+output/gnathostomata_cne_final_table.tsv filter=lfs diff=lfs merge=lfs -text
+output/gnathostomata_specific_cne.tsv filter=lfs diff=lfs merge=lfs -text

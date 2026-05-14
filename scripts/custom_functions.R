@@ -395,3 +395,169 @@ plot_gviz_zoom <- function(
     ptrack = ptrack
   ))
 }
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+# Tolerance-aware overlap: returns indices of `query` overlapping `subject`.
+# `slack = 0` is strict overlap; > 0 allows that many bp of coordinate drift
+# (useful for lifted-over coordinates).
+overlapping_idx <- function(query, subject, slack = 0L) {
+  hits <- findOverlaps(query, subject, maxgap = slack, ignore.strand = TRUE)
+  unique(queryHits(hits))
+}
+
+# Pairwise Jaccard from a logical/binary membership matrix.
+jaccard_mat <- function(mat) {
+  m <- as.matrix(mat + 0L)
+  nms <- colnames(m)
+  n <- ncol(m)
+  out <- matrix(NA_real_, n, n, dimnames = list(nms, nms))
+  for (i in seq_len(n)) {
+    for (j in seq_len(n)) {
+      inter <- sum(m[, i] & m[, j])
+      uni <- sum(m[, i] | m[, j])
+      out[i, j] <- if (uni == 0) NA_real_ else inter / uni
+    }
+  }
+  out
+}
+
+# ── Master per-universe analysis ─────────────────────────────────────────────
+
+analyse_cne_universe <- function(
+  anno_gr,
+  label,
+  atac_peaks_gr,
+  enh_gr,
+  yuesong_gr,
+  fin_geneIds = NULL,
+  slack = 0L,
+  out_dir = '../output'
+) {
+  # 1. Universe: unique, non-exonic CNE annotations from this category
+  universe_gr <- unique(anno_gr[!str_detect(anno_gr$annotation, "Exon")])
+  n_uni <- length(universe_gr)
+
+  # 2. Set memberships as positional indices into universe_gr
+  in_atac <- overlapping_idx(universe_gr, atac_peaks_gr, slack = slack)
+  in_chan <- overlapping_idx(universe_gr, enh_gr, slack = slack)
+  in_yue <- overlapping_idx(universe_gr, yuesong_gr, slack = slack)
+  in_active <- which(
+    !is.na(mcols(universe_gr)$flank_is_active) &
+      mcols(universe_gr)$flank_is_active
+  )
+  in_fin <- if (length(fin_geneIds)) {
+    which(universe_gr$geneId %in% fin_geneIds)
+  } else {
+    integer(0)
+  }
+
+  # 3. Binary membership matrix (rows = CNEs, cols = sets)
+  universe_col <- paste(label, "CNEs")
+  mem <- data.frame(
+    placeholder = rep(TRUE, n_uni),
+    `ATAC peaks` = seq_len(n_uni) %in% in_atac,
+    `Active genes nearby` = seq_len(n_uni) %in% in_active,
+    `Fin-dev genes nearby` = seq_len(n_uni) %in% in_fin,
+    `YueSong overlap` = seq_len(n_uni) %in% in_yue,
+    `Chan enhancers overlap` = seq_len(n_uni) %in% in_chan,
+    check.names = FALSE
+  )
+  names(mem)[1] <- universe_col
+
+  # Drop empty sets so UpSet / Jaccard stay legible (universe column survives,
+  # since it's all TRUE).
+  mem <- mem[, vapply(mem, any, logical(1)), drop = FALSE]
+
+  # 4. UpSet plot
+  comb <- make_comb_mat(as.matrix(mem + 0L))
+  pdf(
+    file.path(out_dir, sprintf('upset_overlaps_%s.pdf', label)),
+    width = 10,
+    height = 6
+  )
+  draw(UpSet(
+    comb,
+    set_order = colnames(mem),
+    top_annotation = upset_top_annotation(comb, add_numbers = TRUE),
+    right_annotation = upset_right_annotation(comb, add_numbers = TRUE)
+  ))
+  dev.off()
+
+  # 5. Jaccard heatmap on the same matrix
+  jac <- jaccard_mat(mem)
+  col_fun <- colorRamp2(
+    c(0, 0.25, 0.5, 1),
+    c("#f7fbff", "#9ecae1", "#3182bd", "#08306b")
+  )
+  ha_row <- rowAnnotation(
+    `Set size` = anno_barplot(
+      colSums(mem),
+      bar_width = 0.7,
+      gp = gpar(fill = "#4DAACC", col = NA),
+      axis_param = list(side = "top", labels_rot = 0),
+      width = unit(3, "cm")
+    )
+  )
+
+  pdf(
+    file.path(out_dir, sprintf('jaccard_overlap_heatmap_%s.pdf', label)),
+    width = 8,
+    height = 7
+  )
+  draw(Heatmap(
+    jac,
+    name = "Jaccard\nsimilarity",
+    col = col_fun,
+    cell_fun = function(j, i, x, y, w, h, fill) {
+      grid.text(
+        sprintf("%.2f", jac[i, j]),
+        x,
+        y,
+        gp = gpar(fontsize = 9, col = ifelse(jac[i, j] > 0.4, "white", "black"))
+      )
+    },
+    cluster_rows = TRUE,
+    cluster_columns = TRUE,
+    show_row_dend = FALSE,
+    show_column_dend = FALSE,
+    row_names_side = "left",
+    column_names_rot = 35,
+    right_annotation = ha_row,
+    rect_gp = gpar(col = "white", lwd = 1.5),
+    heatmap_legend_param = list(
+      direction = "horizontal",
+      title_position = "topcenter"
+    )
+  ))
+  dev.off()
+
+  # 6. Final tidy table (input to app.R) — same layout as before, plus the
+  #    binary membership columns.
+  final_df <- as.data.frame(universe_gr)
+  final_df$in_atac_peak <- as.integer(seq_len(n_uni) %in% in_atac)
+  final_df$nearby_gene_active <- as.integer(seq_len(n_uni) %in% in_active)
+  final_df$nearby_gene_fin_dev <- as.integer(seq_len(n_uni) %in% in_fin)
+  final_df$overlaps_chan_enhancer <- as.integer(seq_len(n_uni) %in% in_chan)
+  final_df$overlaps_yuesong_cne <- as.integer(seq_len(n_uni) %in% in_yue)
+
+  stopifnot(
+    sum(final_df$in_atac_peak) == length(in_atac),
+    sum(final_df$nearby_gene_active) == length(in_active),
+    sum(final_df$nearby_gene_fin_dev) == length(in_fin),
+    sum(final_df$overlaps_chan_enhancer) == length(in_chan),
+    sum(final_df$overlaps_yuesong_cne) == length(in_yue)
+  )
+
+  write.table(
+    final_df,
+    file.path(out_dir, sprintf('%s_cne_final_table.tsv', label)),
+    sep = '\t',
+    quote = FALSE,
+    col.names = TRUE,
+    row.names = FALSE
+  )
+
+  invisible(list(universe = universe_gr, mem = mem, final = final_df))
+}

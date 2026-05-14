@@ -49,26 +49,6 @@ gnathostomata_cne <- read_tsv(
 colnames(actinopteriigy_cne) <- bed_colnames
 colnames(gnathostomata_cne) <- bed_colnames
 
-# Read in phyloP score calculations
-# List files with "phyloP" suffix (adjust pattern as needed)
-files <- list.files(
-  path = '../input/phyloP/',
-  pattern = "phyloP$",
-  full.names = TRUE
-)
-
-# Read all files into a list of data frames
-data_list <- lapply(
-  files,
-  read.table,
-  header = T,
-  sep = "",
-  stringsAsFactors = FALSE
-)
-
-# Concatenate all data frames row-wise
-combined_data <- do.call(rbind, data_list)
-
 drer_sizes <- read_tsv(
   "../ancilliary_files/drer_chrom_info.txt",
   col_names = FALSE
@@ -426,6 +406,19 @@ lf2lf %>%
 ### EXPORT ###
 ##############
 
+export <- peak_anno_list$gnathostomata_CNE@anno[
+  !(str_detect(peak_anno_list$actinopteriigy_CNE@anno$annotation, 'Exon')),
+]
+write.table(
+  export,
+  '../output/gnathostomata_specific_cne.tsv',
+  sep = '\t',
+  quote = F,
+  col.names = T,
+  row.names = F
+)
+
+
 export <- peak_anno_list$actinopteriigy_CNE@anno[
   !(str_detect(peak_anno_list$actinopteriigy_CNE@anno$annotation, 'Exon')),
 ]
@@ -477,14 +470,7 @@ write.table(
   col.names = T,
   row.names = F
 )
-write.table(
-  export,
-  '../output/actinopteriigy_specific_cne.tsv',
-  sep = '\t',
-  quote = F,
-  col.names = T,
-  row.names = F
-)
+
 
 go_signif <- ego_bp@compareClusterResult[
   ego_bp@compareClusterResult$qvalue <= 0.05,
@@ -920,7 +906,7 @@ library(ComplexHeatmap)
 source('custom_functions.R')
 
 # ---------- Universe ----------
-anno_gr <- peak_anno_list$actinopteriigy_CNE@anno
+anno_gr <- unique(peak_anno_list$actinopteriigy_CNE@anno)
 
 # optional filter
 anno_gr2 <- anno_gr[!str_detect(anno_gr$annotation, "Exon")]
@@ -1006,6 +992,48 @@ UpSet(
 )
 dev.off()
 
+# ---------- assemble sets, and (optionally) clamp to universe ----------
+set_list_ids <- list(
+  `actinopteriigy CNEs` = S_actinopteriigy,
+  `YueSong overlap` = S_sheet7,
+  `Chan enhancers overlap` = S_chan_enh
+)
+
+# ensure all sets are subset of the same universe (important for sanity)
+set_list_ids <- lapply(set_list_ids, function(s) intersect(s, U))
+
+# ---------- UpSet ----------
+comb <- make_comb_mat(set_list_ids)
+pdf('../output/upset_external_studies.pdf', width = 8, height = 6)
+UpSet(
+  comb,
+  set_order = names(set_list_ids),
+  top_annotation = upset_top_annotation(comb, add_numbers = TRUE),
+  right_annotation = upset_right_annotation(comb, add_numbers = TRUE)
+)
+dev.off()
+
+# ---------- assemble sets, and (optionally) clamp to universe ----------
+set_list_ids <- list(
+  `actinopteriigy CNEs` = S_actinopteriigy,
+  `ATAC Peaks` = S_atac,
+  `Active genes nearby` = S_active
+)
+
+# ensure all sets are subset of the same universe (important for sanity)
+set_list_ids <- lapply(set_list_ids, function(s) intersect(s, U))
+
+# ---------- UpSet ----------
+comb <- make_comb_mat(set_list_ids)
+pdf('../output/upset_external_studies.pdf', width = 8, height = 6)
+UpSet(
+  comb,
+  set_order = names(set_list_ids),
+  top_annotation = upset_top_annotation(comb, add_numbers = TRUE),
+  right_annotation = upset_right_annotation(comb, add_numbers = TRUE)
+)
+dev.off()
+
 
 library(GenomicRanges)
 library(ComplexHeatmap)
@@ -1027,10 +1055,10 @@ overlapping_idx <- function(query, subject, slack = 50L) {
 
 # ── 2. Base GRanges (your universe) ───────────────────────────────────────────
 # All set membership is determined by overlap with anno_gr2, not string matching.
-base_gr <- anno_gr2 # GRanges, one range per CNE
+base_gr <- unique(anno_gr2) # GRanges, one range per CNE
 
 # ── 3. Build each set as a logical index vector over base_gr ──────────────────
-SLACK <- 50L # adjust as needed — 0 for exact, 50-200 for lifted coords
+SLACK <- 0L # adjust as needed — 0 for exact, 50-200 for lifted coords
 
 in_atac <- overlapping_idx(base_gr, atac_peaks_gr, slack = SLACK)
 in_active <- which(
@@ -1051,98 +1079,37 @@ in_sheet7 <- overlapping_idx(
 )
 in_chan_enh <- overlapping_idx(base_gr, enh_gr, slack = SLACK)
 
-# ── 4. Binary membership matrix (rows = CNEs, cols = sets) ───────────────────
-n <- length(base_gr)
+# ── Run analyses ─────────────────────────────────────────────────────────────
 
-mem <- data.frame(
-  `actinopteriigy CNEs` = rep(TRUE, n), # universe = all CNEs
-  `ATAC peaks` = seq_len(n) %in% in_atac,
-  `Active genes nearby` = seq_len(n) %in% in_active,
-  #  `Fin-dev genes nearby` = seq_len(n) %in% in_fin,
-  #  `YueSong overlap`      = seq_len(n) %in% in_sheet7,
-  #  `Chan enhancers`       = seq_len(n) %in% in_chan_enh,
-  check.names = FALSE
+res_actino <- analyse_cne_universe(
+  anno_gr = unique(peak_anno_list$actinopteriigy_CNE@anno),
+  label = "actinopteriigy",
+  atac_peaks_gr = atac_peaks_gr,
+  enh_gr = enh_gr,
+  yuesong_gr = yuesong_gr,
+  fin_geneIds = filtered_genes_fin,
+  slack = 0L
 )
 
-# ── 5. Pairwise Jaccard from the binary matrix ────────────────────────────────
-jaccard_mat <- function(mat) {
-  nms <- colnames(mat)
-  m <- as.matrix(mat + 0L) # logical → integer
-  n <- ncol(m)
-  out <- matrix(NA_real_, n, n, dimnames = list(nms, nms))
-  for (i in seq_len(n)) {
-    for (j in seq_len(n)) {
-      inter <- sum(m[, i] & m[, j])
-      union <- sum(m[, i] | m[, j])
-      out[i, j] <- if (union == 0) NA_real_ else inter / union
-    }
-  }
-  out
-}
-
-jac_mat <- jaccard_mat(mem)
-
-# ── 6. Plot ───────────────────────────────────────────────────────────────────
-col_fun <- colorRamp2(
-  c(0, 0.25, 0.5, 1),
-  c("#f7fbff", "#9ecae1", "#3182bd", "#08306b")
+res_gnatho <- analyse_cne_universe(
+  anno_gr = unique(peak_anno_list$gnathostomata_CNE@anno),
+  label = "gnathostomata",
+  atac_peaks_gr = atac_peaks_gr,
+  enh_gr = enh_gr,
+  yuesong_gr = yuesong_gr,
+  fin_geneIds = filtered_genes_fin,
+  slack = 0L
 )
 
-set_sizes <- colSums(mem)
-
-ha_row <- rowAnnotation(
-  `Set size` = anno_barplot(
-    set_sizes,
-    bar_width = 0.7,
-    gp = gpar(fill = "#4DAACC", col = NA),
-    axis_param = list(side = "top", labels_rot = 0),
-    width = unit(3, "cm")
-  )
-)
-
-pdf('../output/jaccard_overlap_heatmap.pdf', width = 8, height = 7)
-Heatmap(
-  jac_mat,
-  name = "Jaccard\nsimilarity",
-  col = col_fun,
-  cell_fun = function(j, i, x, y, w, h, fill) {
-    grid.text(
-      sprintf("%.2f", jac_mat[i, j]),
-      x,
-      y,
-      gp = gpar(
-        fontsize = 9,
-        col = ifelse(jac_mat[i, j] > 0.4, "white", "black")
-      )
-    )
-  },
-  cluster_rows = TRUE,
-  cluster_columns = TRUE,
-  show_row_dend = FALSE,
-  show_column_dend = FALSE,
-  row_names_side = "left",
-  column_names_rot = 35,
-  right_annotation = ha_row,
-  rect_gp = gpar(col = "white", lwd = 1.5),
-  heatmap_legend_param = list(
-    direction = "horizontal",
-    title_position = "topcenter"
-  )
-)
-dev.off()
-
-# ── 7. UpSet from the same binary matrix ──────────────────────────────────────
-comb <- make_comb_mat(as.matrix(mem + 0L))
-
-pdf('../output/upset_overlaps_wo_fin-chen-yue.pdf', width = 10, height = 6)
+comb <- make_comb_mat(res_gnatho$final)
+pdf('../output/upset_overlaps.pdf', width = 8, height = 6)
 UpSet(
   comb,
-  set_order = colnames(mem),
+  set_order = names(set_list_ids),
   top_annotation = upset_top_annotation(comb, add_numbers = TRUE),
   right_annotation = upset_right_annotation(comb, add_numbers = TRUE)
 )
 dev.off()
-
 
 ##################################################
 ### FINAL ACTINOPTERIIGY TABLE (input to app.R) ###
@@ -1158,12 +1125,12 @@ dev.off()
 
 # 1. Coerce the universe GRanges to a data.frame (same layout as the existing
 #    teleost-input file)
-final_actinopteriigy_df <- as.data.frame(anno_gr2)
+final_actinopteriigy_df <- as.data.frame(unique(anno_gr2))
 
 # 2. Add the four binary membership columns (1 = member, 0 = not).
 #    `in_atac`, `in_active`, `in_chan_enh`, `in_sheet7` are positional indices
 #    into `anno_gr2`, defined in the upset section above.
-n_anno <- length(anno_gr2)
+n_anno <- length(unique(anno_gr2))
 
 final_actinopteriigy_df$in_atac_peak <- as.integer(seq_len(n_anno) %in% in_atac)
 final_actinopteriigy_df$nearby_gene_active <- as.integer(
@@ -1188,6 +1155,36 @@ stopifnot(
 out_final_path <- '../output/actinopteriigy_cne_final_table.tsv'
 write.table(
   final_actinopteriigy_df,
+  out_final_path,
+  sep = '\t',
+  quote = FALSE,
+  col.names = TRUE,
+  row.names = FALSE
+)
+
+
+final_gnathostomata_df <- as.data.frame(unique(peak_anno_list$gnathostomata_CNE@anno[
+  !str_detect(peak_anno_list$gnathostomata_CNE@anno$annotation, "Exon")
+]))
+n_anno <- length(unique(peak_anno_list$gnathostomata_CNE@anno[
+  !str_detect(peak_anno_list$gnathostomata_CNE@anno$annotation, "Exon")
+]))
+
+final_gnathostomata_df$in_atac_peak <- as.integer(seq_len(n_anno) %in% in_atac)
+final_gnathostomata_df$nearby_gene_active <- as.integer(
+  seq_len(n_anno) %in% in_active
+)
+final_gnathostomata_df$overlaps_chan_enhancer <- as.integer(
+  seq_len(n_anno) %in% in_chan_enh
+)
+final_gnathostomata_df$overlaps_yuesong_cne <- as.integer(
+  seq_len(n_anno) %in% in_sheet7
+)
+
+# 4. Write final table as TSV (read by app.R)
+out_final_path <- '../output/gnathostomata_cne_final_table.tsv'
+write.table(
+  final_gnathostomata_df,
   out_final_path,
   sep = '\t',
   quote = FALSE,
