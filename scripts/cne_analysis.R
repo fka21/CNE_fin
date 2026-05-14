@@ -1043,16 +1043,6 @@ library(circlize)
 # Returns the indices in `query` that overlap anything in `subject`,
 # allowing up to `slack` bp of coordinate shift on either side.
 
-overlapping_idx <- function(query, subject, slack = 50L) {
-  hits <- findOverlaps(
-    query,
-    subject,
-    maxgap = slack, # allow up to `slack` bp gap between ranges
-    ignore.strand = TRUE
-  )
-  unique(queryHits(hits))
-}
-
 # ── 2. Base GRanges (your universe) ───────────────────────────────────────────
 # All set membership is determined by overlap with anno_gr2, not string matching.
 base_gr <- unique(anno_gr2) # GRanges, one range per CNE
@@ -1162,13 +1152,34 @@ write.table(
   row.names = FALSE
 )
 
+base_gr <- unique(peak_anno_list$gnathostomata_CNE@anno[
+  !str_detect(peak_anno_list$gnathostomata_CNE@anno$annotation, "Exon")
+])
 
-final_gnathostomata_df <- as.data.frame(unique(peak_anno_list$gnathostomata_CNE@anno[
-  !str_detect(peak_anno_list$gnathostomata_CNE@anno$annotation, "Exon")
-]))
-n_anno <- length(unique(peak_anno_list$gnathostomata_CNE@anno[
-  !str_detect(peak_anno_list$gnathostomata_CNE@anno$annotation, "Exon")
-]))
+final_gnathostomata_df <- as.data.frame(base_gr)
+n_anno <- length(base_gr)
+
+
+# ── 3. Build each set as a logical index vector over base_gr ──────────────────
+
+in_atac <- overlapping_idx(base_gr, atac_peaks_gr, slack = SLACK)
+in_active <- which(
+  !is.na(mcols(base_gr)$flank_is_active) &
+    mcols(base_gr)$flank_is_active
+)
+in_fin <- which(base_gr$geneId %in% filtered_genes_fin)
+in_sheet7 <- overlapping_idx(
+  base_gr,
+  GRanges(
+    seqnames = str_remove_all(actinopteriigy_cne_ov$chromosome, "\\.1$"),
+    ranges = IRanges(
+      start = actinopteriigy_cne_ov$start,
+      end = actinopteriigy_cne_ov$end
+    )
+  ),
+  slack = SLACK
+)
+in_chan_enh <- overlapping_idx(base_gr, enh_gr, slack = SLACK)
 
 final_gnathostomata_df$in_atac_peak <- as.integer(seq_len(n_anno) %in% in_atac)
 final_gnathostomata_df$nearby_gene_active <- as.integer(

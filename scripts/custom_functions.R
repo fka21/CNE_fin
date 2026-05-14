@@ -561,3 +561,13 @@ analyse_cne_universe <- function(
 
   invisible(list(universe = universe_gr, mem = mem, final = final_df))
 }
+
+overlapping_idx <- function(query, subject, slack = 50L) {
+  hits <- findOverlaps(
+    query,
+    subject,
+    maxgap = slack, # allow up to `slack` bp gap between ranges
+    ignore.strand = TRUE
+  )
+  unique(queryHits(hits))
+}
