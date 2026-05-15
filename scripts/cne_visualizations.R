@@ -170,13 +170,13 @@ xlim <- cbind(
 )
 
 # ---- colors ----
-teleost_line <- "#1F78B4"
-verte_line <- "skyblue"
-atac_line <- "#E31A1C"
+teleost_line <- "#CC79A7"
+verte_line <- "#009E73"
+atac_line <- "gray50"
 
-teleost_fill <- "#1F78B4"
-verte_fill <- "skyblue"
-atac_fill <- "#E31A1C"
+teleost_fill <- "#CC79A7"
+verte_fill <- "#009E73"
+atac_fill <- "gray50"
 
 pdf("../output/circos_element_density.pdf", width = 9, height = 9)
 
