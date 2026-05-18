@@ -1125,6 +1125,9 @@ stopifnot(
   sum(final_actinopteriigy_df$overlaps_yuesong_cne) == length(in_sheet7)
 )
 
+final_actinopteriigy_df <- final_actinopteriigy_df %>%
+  filter(width > 20)
+
 # 4. Write final table as TSV (read by app.R)
 out_final_path <- '../output/actinopteriigy_cne_final_table.tsv'
 write.table(
@@ -1175,6 +1178,9 @@ final_gnathostomata_df$overlaps_chan_enhancer <- as.integer(
 final_gnathostomata_df$overlaps_yuesong_cne <- as.integer(
   seq_len(n_anno) %in% in_sheet7
 )
+
+final_gnathostomata_df <- final_gnathostomata_df %>%
+  filter(width > 20)
 
 # 4. Write final table as TSV (read by app.R)
 out_final_path <- '../output/gnathostomata_cne_final_table.tsv'
