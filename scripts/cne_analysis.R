@@ -195,9 +195,9 @@ actinopteriigy_cne_ov <- actinopteriigy_cne %>%
 peak_anno_list <- lapply(
   list(actinopteriigy_cne_gr, gnathostomata_cne_gr),
   annotatePeak,
+  overlap = 'all',
   TxDb = drer_anno,
   tssRegion = c(-3000, 3000),
-  addFlankGeneInfo = TRUE,
   genomicAnnotationPriority = c(
     "Intergenic",
     "Downstream",
@@ -215,23 +215,7 @@ names(peak_anno_list) <- c("actinopteriigy_CNE", "gnathostomata_CNE")
 peak_anno_list <- lapply(peak_anno_list, function(anno_obj) {
   anno_df <- as_tibble(anno_obj@anno) %>%
     # Join with gene activity info by nearest gene (geneId)
-    left_join(gene_activity, by = c("geneId" = "gene_id")) %>%
-    # For flank genes, also get their activity status
-    separate_rows(flank_geneIds, sep = ";") %>%
-    left_join(
-      gene_activity %>%
-        dplyr::select(gene_id, mean_tpm, z_fpkm, is_active) %>%
-        rename_with(
-          ~ paste0("flank_", .),
-          starts_with(c("mean", "z_f", "is_"))
-        ),
-      by = c("flank_geneIds" = "gene_id")
-    ) #%>%
-  # Flag if nearest gene is active or any flank gene is active
-  #mutate(
-  #  nearest_gene_active = coalesce(is_active.y, FALSE),
-  #  any_flank_gene_active = coalesce(flank_is_active.y, FALSE)
-  #)
+    left_join(gene_activity, by = c("geneId" = "gene_id"))
 
   # Update the annotation object
   anno_obj@anno <- as(anno_df, "GRanges")
@@ -503,7 +487,7 @@ write.table(
 )
 # Export GO-filtered CNEs that are near active genes (fin-specific)
 actinopteriigy_filtered_fin_active <- actinopteriigy_filtered_fin %>%
-  filter(flank_is_active == TRUE)
+  filter(is_active == TRUE)
 
 write.table(
   actinopteriigy_filtered_fin_active,
@@ -515,7 +499,7 @@ write.table(
 )
 # Export GO-filtered CNEs that are near active genes (fin+skeletal-specific)
 actinopteriigy_filtered_skeletal_fin_active <- actinopteriigy_filtered_skeletal_fin %>%
-  filter(flank_is_active == TRUE)
+  filter(is_active == TRUE)
 
 write.table(
   actinopteriigy_filtered_skeletal_fin_active,
@@ -582,7 +566,7 @@ write.table(
 
 # Export ATACseq-overlapping CNEs from ACTIVE genes only
 cne_atac_annotated_active <- cne_atac_annotated_df %>%
-  filter(flank_is_active == TRUE)
+  filter(is_active == TRUE)
 
 write.table(
   cne_atac_annotated_active,
@@ -646,7 +630,7 @@ write.table(
 
 # Filter to fin-specific AND active genes
 cne_atac_fin_specific_active <- cne_atac_fin_specific %>%
-  filter(flank_is_active == TRUE)
+  filter(is_active == TRUE)
 
 write.table(
   cne_atac_fin_specific_active,
@@ -696,7 +680,7 @@ write.table(
 
 # Filter to only those near active genes
 final_df_tel_active <- final_df_tel %>%
-  filter(flank_is_active == TRUE)
+  filter(is_active == TRUE)
 
 out_path_active <- '../output/actinopteriigy_unique_cne_with_atac_annotated_active_genes.tsv'
 write.table(
@@ -767,12 +751,12 @@ anno_tel_gr <- peak_anno_list$actinopteriigy_CNE@anno
 anno_ver_gr <- peak_anno_list$gnathostomata_CNE@anno
 
 # Prefer flank activity flag if present; otherwise fall back to nearest gene activity flag ("is_active")
-if ("flank_is_active" %in% colnames(mcols(anno_tel_gr))) {
+if ("is_active" %in% colnames(mcols(anno_tel_gr))) {
   cne_with_active_flanks_gr <- anno_tel_gr[which(
-    !is.na(anno_tel_gr$flank_is_active) & anno_tel_gr$flank_is_active
+    !is.na(anno_tel_gr$is_active) & anno_tel_gr$is_active
   )]
   cne_with_active_flanks_ver_gr <- anno_ver_gr[which(
-    !is.na(anno_ver_gr$flank_is_active) & anno_ver_gr$flank_is_active
+    !is.na(anno_ver_gr$is_active) & anno_ver_gr$is_active
   )]
 } else if ("is_active" %in% colnames(mcols(anno_tel_gr))) {
   cne_with_active_flanks_gr <- anno_tel_gr[which(
@@ -796,7 +780,7 @@ if (exists("filtered_genes")) {
   idx_go_ver <- integer(0)
 }
 
-# nearest-gene activity flag is "is_active" from gene_activity join; if absent, use flank_is_active
+# nearest-gene activity flag is "is_active" from gene_activity join; if absent, use is_active
 if ("is_active" %in% colnames(mcols(anno_tel_gr))) {
   idx_active_nearest <- which(
     !is.na(anno_tel_gr$is_active) & anno_tel_gr$is_active
@@ -804,12 +788,12 @@ if ("is_active" %in% colnames(mcols(anno_tel_gr))) {
   idx_active_nearest_ver <- which(
     !is.na(anno_ver_gr$is_active) & anno_ver_gr$is_active
   )
-} else if ("flank_is_active" %in% colnames(mcols(anno_tel_gr))) {
+} else if ("is_active" %in% colnames(mcols(anno_tel_gr))) {
   idx_active_nearest <- which(
-    !is.na(anno_tel_gr$flank_is_active) & anno_tel_gr$flank_is_active
+    !is.na(anno_tel_gr$is_active) & anno_tel_gr$is_active
   )
   idx_active_nearest_ver <- which(
-    !is.na(anno_ver_gr$flank_is_active) & anno_ver_gr$flank_is_active
+    !is.na(anno_ver_gr$is_active) & anno_ver_gr$is_active
   )
 } else {
   idx_active_nearest <- integer(0)
@@ -928,7 +912,7 @@ subset_gr_true <- function(gr, col) {
   gr[idx]
 }
 
-anno_gr_active <- subset_gr_true(anno_gr2, "flank_is_active")
+anno_gr_active <- subset_gr_true(anno_gr2, "is_active")
 S_active <- unique(gr_id(anno_gr_active))
 
 # ---------- Set 4: fin developmental genes nearby ----------
@@ -1052,8 +1036,8 @@ SLACK <- 0L # adjust as needed — 0 for exact, 50-200 for lifted coords
 
 in_atac <- overlapping_idx(base_gr, atac_peaks_gr, slack = SLACK)
 in_active <- which(
-  !is.na(mcols(base_gr)$flank_is_active) &
-    mcols(base_gr)$flank_is_active
+  !is.na(mcols(base_gr)$is_active) &
+    mcols(base_gr)$is_active
 )
 in_fin <- which(base_gr$geneId %in% filtered_genes_fin)
 in_sheet7 <- overlapping_idx(
@@ -1109,7 +1093,7 @@ dev.off()
 #
 # The column layout is identical to the existing teleost / actinopteriigy
 # annotated tables (seqnames, start, end, width, strand, annotation, geneId,
-# flank_geneIds, flank_is_active, phastcons, ...) so the Shiny app can read
+# flank_geneIds, is_active, phastcons, ...) so the Shiny app can read
 # the file directly. Four extra binary columns encode the upset-plot set
 # memberships and let the app filter on them independently.
 
@@ -1164,8 +1148,8 @@ n_anno <- length(base_gr)
 
 in_atac <- overlapping_idx(base_gr, atac_peaks_gr, slack = SLACK)
 in_active <- which(
-  !is.na(mcols(base_gr)$flank_is_active) &
-    mcols(base_gr)$flank_is_active
+  !is.na(mcols(base_gr)$is_active) &
+    mcols(base_gr)$is_active
 )
 in_fin <- which(base_gr$geneId %in% filtered_genes_fin)
 in_sheet7 <- overlapping_idx(
