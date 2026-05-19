@@ -37,3 +37,4 @@ output/meme_analysis/**/sequences.*
 tmp/
 *.tmp
 *.log
+output/preprocessed/*.sqlite
