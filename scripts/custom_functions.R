@@ -460,8 +460,6 @@ analyse_cne_universe <- function(
     `ATAC peaks` = seq_len(n_uni) %in% in_atac,
     `Active genes nearby` = seq_len(n_uni) %in% in_active,
     `Fin-dev genes nearby` = seq_len(n_uni) %in% in_fin,
-    `YueSong overlap` = seq_len(n_uni) %in% in_yue,
-    `Chan enhancers overlap` = seq_len(n_uni) %in% in_chan,
     check.names = FALSE
   )
   names(mem)[1] <- universe_col
@@ -570,4 +568,78 @@ overlapping_idx <- function(query, subject, slack = 50L) {
     ignore.strand = TRUE
   )
   unique(queryHits(hits))
+}
+
+
+# Export the non-exonic annotated CNEs as TSVs (kept here because these are
+# pure descriptive products of the preprocessing step).
+non_exon <- function(gr) {
+  gr[!str_detect(gr$annotation, "Exon") & !(is.na(gr$is_active))]
+}
+
+
+combine_great <- function(tbl, cluster_name) {
+  as_tibble(tbl) %>%
+    transmute(
+      ID = id,
+      Description = description,
+      Cluster = cluster_name,
+      FoldEnrichment = fold_enrichment,
+      pvalue = p_value,
+      p.adjust = p_adjust,
+      p.adjust_hyper = p_adjust_hyper,
+      GeneHits = observed_gene_hits,
+      GeneSetSize = gene_set_size,
+      RegionHits = observed_region_hits
+    )
+}
+
+# Dual-test rule (McLean et al. 2010): require binomial AND hypergeometric
+# adj p <= 0.05 for the headline call.
+strict_call <- function(df) {
+  df %>% filter(p.adjust <= 0.05 & p.adjust_hyper <= 0.05)
+}
+
+
+run_simplify <- function(
+  tbl,
+  label,
+  out_dir = great_dir,
+  padj_cut = 0.05,
+  hyper_cut = 0.05
+) {
+  sig_ids <- as_tibble(tbl) %>%
+    filter(p_adjust <= padj_cut, p_adjust_hyper <= hyper_cut) %>%
+    pull(id) %>%
+    unique()
+
+  if (length(sig_ids) < 5) {
+    message(
+      "Too few sig terms for simplifyGO in ",
+      label,
+      " (n = ",
+      length(sig_ids),
+      ")"
+    )
+    return(invisible(NULL))
+  }
+
+  sim_mat <- GO_similarity(sig_ids, ont = "BP", db = "org.Dr.eg.db")
+
+  pdf(
+    file.path(out_dir, paste0("simplifyGO_", label, ".pdf")),
+    width = 10,
+    height = 8
+  )
+  go_clusters <- simplifyGO(sim_mat)
+  dev.off()
+
+  write.table(
+    go_clusters,
+    file.path(out_dir, paste0("simplifyGO_clusters_", label, ".tsv")),
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+  )
+  invisible(go_clusters)
 }
