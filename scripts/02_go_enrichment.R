@@ -472,6 +472,9 @@ genes_smo <- unique(c(
 ))
 gene_gr_smo <- gene_gr[mcols(gene_gr)$gene_id %in% genes_smo]
 
+great_dir <- "../output/great/gviz/"
+dir.create(great_dir, showWarnings = FALSE, recursive = TRUE)
+
 saveRDS(gene_gr_smo, "../output/great/gviz/GO0007224_genes.rds")
 saveRDS(assoc_smo_actino, "../output/great/gviz/GO0007224_cnes_actino.rds")
 saveRDS(assoc_smo_gnatho, "../output/great/gviz/GO0007224_cnes_gnatho.rds")

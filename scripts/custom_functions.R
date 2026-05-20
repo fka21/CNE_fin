@@ -266,21 +266,6 @@ overlapping_idx <- function(query, subject, slack = 0L) {
   unique(queryHits(hits))
 }
 
-# Pairwise Jaccard from a logical/binary membership matrix.
-jaccard_mat <- function(mat) {
-  m <- as.matrix(mat + 0L)
-  nms <- colnames(m)
-  n <- ncol(m)
-  out <- matrix(NA_real_, n, n, dimnames = list(nms, nms))
-  for (i in seq_len(n)) {
-    for (j in seq_len(n)) {
-      inter <- sum(m[, i] & m[, j])
-      uni <- sum(m[, i] | m[, j])
-      out[i, j] <- if (uni == 0) NA_real_ else inter / uni
-    }
-  }
-  out
-}
 
 # ── Master per-universe analysis ─────────────────────────────────────────────
 
@@ -362,45 +347,6 @@ analyse_cne_universe <- function(
       set_order = colnames(mem),
       top_annotation = upset_top_annotation(comb, add_numbers = TRUE),
       right_annotation = upset_right_annotation(comb, add_numbers = TRUE)
-    )
-  )
-
-  dev.off()
-
-  # 5. Jaccard
-  jac <- jaccard_mat(mem)
-
-  col_fun <- colorRamp2(
-    c(0, 0.25, 0.5, 1),
-    c("#f7fbff", "#9ecae1", "#3182bd", "#08306b")
-  )
-
-  ha_row <- rowAnnotation(
-    `Set size` = anno_barplot(
-      colSums(mem),
-      bar_width = 0.7,
-      gp = gpar(fill = "#4DAACC", col = NA),
-      axis_param = list(side = "top"),
-      width = unit(3, "cm")
-    )
-  )
-
-  pdf(
-    file.path(out_dir, sprintf("jaccard_overlap_heatmap_%s.pdf", label)),
-    width = 8,
-    height = 7
-  )
-
-  draw(
-    Heatmap(
-      jac,
-      name = "Jaccard\nsimilarity",
-      col = col_fun,
-      cluster_rows = TRUE,
-      cluster_columns = TRUE,
-      show_row_dend = FALSE,
-      show_column_dend = FALSE,
-      right_annotation = ha_row
     )
   )
 
@@ -557,4 +503,28 @@ extract_genes_for_terms <- function(res, tbl, term_descriptions) {
     assoc <- getRegionGeneAssociations(res, term_id = tid)
     unique(unlist(assoc$annotated_genes))
   })))
+}
+
+
+# Relabel RefSeq accessions -> chrN, but only where the relabel succeeds.
+# (Previously this could silently NA out an already-renamed GRanges.)
+relabel_seqlevels <- function(x, genome_df) {
+  current <- seqlevels(x)
+  new_levels <- genome_df$`Sequence name`[
+    match(current, genome_df$`RefSeq seq accession`)
+  ]
+  if (all(is.na(new_levels))) {
+    # already in chr* form — nothing to do
+    return(x)
+  }
+  if (any(is.na(new_levels))) {
+    keep <- !is.na(new_levels)
+    seqlevels(x, pruning.mode = "coarse") <- current[keep]
+    new_levels <- new_levels[keep]
+  }
+  seqlevels(x) <- new_levels
+  seqlengths(x) <- genome_df$`Seq length`[
+    match(seqlevels(x), genome_df$`Sequence name`)
+  ]
+  x
 }

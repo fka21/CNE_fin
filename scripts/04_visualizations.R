@@ -33,19 +33,7 @@ gr <- list(
   gnathostomata_cne_gr = readRDS(
     "../output/preprocessed/gnathostomata_cne_gr.rds"
   ),
-  atac_peaks_gr = readRDS("../output/granges_rds/atac_peaks_gr.rds"),
-  actinopteriigy_cne_overlapping_atac_gr = readRDS(
-    "../output/granges_rds/actinopteriigy_cne_overlapping_atac_gr.rds"
-  ),
-  gnathostomata_cne_overlapping_atac_gr = readRDS(
-    "../output/granges_rds/gnathostomata_cne_overlapping_atac_gr.rds"
-  ),
-  actinopteriigy_cne_active_with_atac_gr = readRDS(
-    "../output/granges_rds/actinopteriigy_cne_active_with_atac_gr.rds"
-  ),
-  atac_peaks_overlapping_actinopteriigy_cne_gr = readRDS(
-    "../output/granges_rds/atac_peaks_overlapping_actinopteriigy_cne_gr.rds"
-  )
+  atac_peaks_gr = readRDS("../output/granges_rds/atac_peaks_gr.rds")
 )
 
 ### --- TxDb (rebuilt; serialisation of TxDb objects is brittle) -------------
@@ -54,57 +42,37 @@ drer_anno <- txdbmaker::makeTxDbFromGFF(
   organism = "Danio rerio"
 )
 gr$genome_genes_gr <- genes(drer_anno)
-
-###############################################################################
-### CNE annotation comparison plot
-###############################################################################
-# Script 01 already annotated the two parent CNE sets. Re-annotate only the
-# derived subsets (ATAC-overlap and active+ATAC) here.
-
-derived_anno <- lapply(
-  list(
-    gr$actinopteriigy_cne_overlapping_atac_gr,
-    gr$gnathostomata_cne_overlapping_atac_gr,
-    gr$actinopteriigy_cne_active_with_atac_gr
-  ),
-  annotatePeak,
-  TxDb = drer_anno,
-  overlap = "all",
-  tssRegion = c(-3000, 3000),
-  genomicAnnotationPriority = c(
-    "Intergenic",
-    "Downstream",
-    "Promoter",
-    "5UTR",
-    "3UTR",
-    "Intron",
-    "Exon"
-  )
+gr$atac_peaks_overlapping_actinopteriigy_cne_gr <- subsetByOverlaps(
+  gr$actinopteriigy_cne_gr,
+  gr$atac_peaks_gr
 )
 
-peak_anno_list <- c(
-  list(
-    `Actinopteriigy specific CNE` = peak_anno_list_pre$actinopteriigy_CNE,
-    `Gnathostomata specific CNE` = peak_anno_list_pre$gnathostomata_CNE
+### --- Build overlap list for all subsets
+overlap_list <- list(
+  `Actinopteriigy specific CNE` = gr$actinopteriigy_cne_gr,
+  `Gnathostomata specific CNE` = gr$gnathostomata_cne_gr,
+  `Actinopteriigy CNE with\nATACseq peak overlap` = subsetByOverlaps(
+    gr$actinopteriigy_cne_gr,
+    gr$atac_peaks_gr
   ),
-  setNames(
-    derived_anno,
-    c(
-      "Actinopteriigy CNE with\nATACseq peak overlap",
-      "Gnathostomata CNE with\nATACseq peak overlap",
-      "Actinopteriigy CNE with\nATACseq peak overlap and\nactive gene nearby"
-    )
+  `Gnathostomata CNE with\nATACseq peak overlap` = subsetByOverlaps(
+    gr$gnathostomata_cne_gr,
+    gr$atac_peaks_gr
+  ),
+  `Actinopteriigy CNE with\nactive gene nearby` = gr$actinopteriigy_cne_gr[
+    gr$actinopteriigy_cne_gr$is_active == T
+  ],
+  `Gnathostomata CNE with\nactive gene nearby` = gr$gnathostomata_cne_gr[
+    gr$gnathostomata_cne_gr$is_active == T
+  ],
+  `Actinopteriigy CNE with\nATACseq peak overlap and\nactive gene nearby` = subsetByOverlaps(
+    gr$actinopteriigy_cne_gr[gr$actinopteriigy_cne_gr$is_active == T],
+    gr$atac_peaks_gr
+  ),
+  `Gnathostomata CNE with\nATACseq peak overlap and\nactive gene nearby` = subsetByOverlaps(
+    gr$gnathostomata_cne_gr[gr$gnathostomata_cne_gr$is_active == T],
+    gr$atac_peaks_gr
   )
-)
-
-p1 <- plotAnnoBar(peak_anno_list) + ggtitle(NULL)
-p2 <- plotDistToTSS(peak_anno_list) + ggtitle(NULL) + ylab("CNE (%) (5' -> 3')")
-(p1 / p2)
-ggsave(
-  "../output/subset_cne_chipseekr_annotated.pdf",
-  height = 9,
-  width = 9,
-  units = "in"
 )
 
 ###############################################################################
@@ -112,32 +80,8 @@ ggsave(
 ###############################################################################
 genome <- read_tsv("../ancilliary_files/sequence_report.tsv")
 
-# Relabel RefSeq accessions -> chrN, but only where the relabel succeeds.
-# (Previously this could silently NA out an already-renamed GRanges.)
-relabel_seqlevels <- function(x, genome_df) {
-  current <- seqlevels(x)
-  new_levels <- genome_df$`Sequence name`[
-    match(current, genome_df$`RefSeq seq accession`)
-  ]
-  if (all(is.na(new_levels))) {
-    # already in chr* form — nothing to do
-    return(x)
-  }
-  if (any(is.na(new_levels))) {
-    keep <- !is.na(new_levels)
-    seqlevels(x, pruning.mode = "coarse") <- current[keep]
-    new_levels <- new_levels[keep]
-  }
-  seqlevels(x) <- new_levels
-  seqlengths(x) <- genome_df$`Seq length`[
-    match(seqlevels(x), genome_df$`Sequence name`)
-  ]
-  x
-}
-
-for (nm in names(gr)) {
-  gr[[nm]] <- relabel_seqlevels(gr[[nm]], genome)
-}
+overlap_list <- lapply(overlap_list, relabel_seqlevels, genome)
+gr <- lapply(gr, relabel_seqlevels, genome)
 
 bin_size <- 2e6
 autosomes <- paste0("chr", 1:25)
@@ -167,12 +111,20 @@ gene_density <- cbind(
   )
 
 atac_bins <- bin_granges(
-  gr$atac_peaks_overlapping_actinopteriigy_cne_gr,
+  overlap_list$`Actinopteriigy CNE with\nATACseq peak overlap`,
   bins,
   autosomes
 )
-teleost_bins <- bin_granges(gr$actinopteriigy_cne_gr, bins, autosomes)
-vertebrate_bins <- bin_granges(gr$gnathostomata_cne_gr, bins, autosomes)
+teleost_bins <- bin_granges(
+  overlap_list$`Actinopteriigy specific CNE`,
+  bins,
+  autosomes
+)
+vertebrate_bins <- bin_granges(
+  overlap_list$`Gnathostomata specific CNE`,
+  bins,
+  autosomes
+)
 
 chrom_lengths <- as.numeric(seqlengths(genes)[autosomes])
 xlim <- cbind(start = rep(1, length(autosomes)), end = chrom_lengths)

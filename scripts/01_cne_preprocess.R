@@ -296,6 +296,10 @@ saveRDS(
 # Chrom-size table (used by script 2 for extendTSS)
 saveRDS(drer_sizes, file.path(preproc_dir, "drer_sizes.rds"))
 
+# TxDb (saved via SQLite path; reload with loadDb())
+txdb_path <- file.path(preproc_dir, "drer_anno.sqlite")
+AnnotationDbi::saveDb(drer_anno, txdb_path)
+
 # ChIPseeker output + per-CNE activity (used by script 3)
 saveRDS(peak_anno_list, file.path(preproc_dir, "peak_anno_list.rds"))
 
