@@ -76,6 +76,33 @@ overlap_list <- list(
 )
 
 ###############################################################################
+### Annotation plot
+###############################################################################
+
+temp_list <- lapply(
+  overlap_list,
+  annotatePeak,
+  overlap = "all",
+  TxDb = drer_anno,
+  tssRegion = c(-3000, 3000),
+  genomicAnnotationPriority = c(
+    "Intergenic",
+    "Downstream",
+    "Promoter",
+    "5UTR",
+    "3UTR",
+    "Intron",
+    "Exon"
+  )
+)
+
+p1 <- plotAnnoBar(temp_list, title = NULL)
+p2 <- plotDistToTSS(temp_list, title = NULL, ylab = "CNEs (%) (5' -> 3')")
+
+p1 / p2
+ggsave('../output/cne_annotations.pdf', width = 8, height = 10)
+
+###############################################################################
 ### Circos plot
 ###############################################################################
 genome <- read_tsv("../ancilliary_files/sequence_report.tsv")
@@ -281,6 +308,7 @@ zooms <- tribble(
   "chr14" ,  2e6     ,  3e6     , "../output/chr14_gviz_zoom.pdf" ,
   "chr18" ,   39.5e6 ,   40.5e6 , "../output/chr18_gviz_zoom.pdf" ,
   "chr9"  ,   39.5e6 ,   40.5e6 , "../output/chr9_gviz_zoom.pdf"  ,
+  "chr12" , 44e6     , 45e6     , "../output/chr12_gviz_zoom.pdf" ,
   "chr19" , 39e6     , 41e6     , "../output/chr19_gviz_zoom.pdf"
 )
 
