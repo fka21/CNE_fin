@@ -111,17 +111,6 @@ write.table(
   row.names = FALSE
 )
 
-### --- Significant rGREAT terms export (replaces the old signif_go dump) ---
-go_signif <- great_tbl_actino |>
-  filter(p_adjust <= 0.05 | p_adjust_hyper <= 0.05)
-write.table(
-  go_signif,
-  "../output/GO_enrichment_results.tsv",
-  sep = "\t",
-  quote = FALSE,
-  row.names = FALSE
-)
-
 ### --- Active-gene filtered exports ----------------------------------------
 export_active <- as.data.frame(
   anno_actino[
@@ -337,18 +326,14 @@ res_actino <- analyse_cne_universe(
   anno_gr = unique(anno_actino),
   label = "actinopteriigy",
   atac_peaks_gr = atac_peaks_gr,
-  enh_gr = enh_gr,
-  yuesong_gr = yuesong_gr,
   fin_geneIds = filtered_genes_fin,
   slack = 0L
 )
 
-res_actino <- analyse_cne_universe(
+res_gnatho <- analyse_cne_universe(
   anno_gr = unique(anno_gnatho),
   label = "gnathostomata",
   atac_peaks_gr = atac_peaks_gr,
-  enh_gr = enh_gr,
-  yuesong_gr = yuesong_gr,
   fin_geneIds = filtered_genes_fin,
   slack = 0L
 )

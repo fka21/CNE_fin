@@ -118,7 +118,9 @@ gnathostomata_cne_gr <- GRanges(
 actinopteriigy_cne_gr <- actinopteriigy_cne_gr[
   width(actinopteriigy_cne_gr) > 25
 ]
-gnathostomata_cne_gr <- gnathostomata_cne_gr[width(gnathostomata_cne_gr) > 25]
+gnathostomata_cne_gr <- gnathostomata_cne_gr[
+  width(gnathostomata_cne_gr) > 25
+]
 
 # --- Reconcile chromosome naming and inject seqlengths -----------------------
 crossmapping <- data.frame(
@@ -256,6 +258,7 @@ peak_anno_list <- lapply(peak_anno_list, function(anno_obj) {
   anno_df <- as_tibble(anno_obj@anno) %>%
     left_join(gene_activity, by = c("geneId" = "gene_id"))
   anno_obj@anno <- as(anno_df, "GRanges")
+  anno_obj@anno <- non_exon(anno_obj@anno)
   anno_obj
 })
 
@@ -282,20 +285,16 @@ write.table(
 
 # CNE GRanges (consumed by both scripts 2 and 3)
 saveRDS(
-  actinopteriigy_cne_gr,
+  non_exon(peak_anno_list$actinopteriigy_CNE@anno),
   file.path(preproc_dir, "actinopteriigy_cne_gr.rds")
 )
 saveRDS(
-  gnathostomata_cne_gr,
+  non_exon(peak_anno_list$gnathostomata_CNE@anno),
   file.path(preproc_dir, "gnathostomata_cne_gr.rds")
 )
 
 # Chrom-size table (used by script 2 for extendTSS)
 saveRDS(drer_sizes, file.path(preproc_dir, "drer_sizes.rds"))
-
-# TxDb (saved via SQLite path; reload with loadDb())
-txdb_path <- file.path(preproc_dir, "drer_anno.sqlite")
-AnnotationDbi::saveDb(drer_anno, txdb_path)
 
 # ChIPseeker output + per-CNE activity (used by script 3)
 saveRDS(peak_anno_list, file.path(preproc_dir, "peak_anno_list.rds"))

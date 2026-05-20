@@ -132,6 +132,17 @@ combined_vs_cne <- bind_rows(
 combined_strict <- strict_call(combined)
 combined_vs_cne_strict <- strict_call(combined_vs_cne)
 
+### --- Significant rGREAT terms export (replaces the old signif_go dump) ---
+go_signif <- combined |>
+  filter(p.adjust <= 0.05 | p.adjust_hyper <= 0.05)
+write.table(
+  go_signif,
+  "../output/GO_enrichment_results.tsv",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
 # Shared-terms (per-cluster wide) table for the FE-vs-FE comparison
 shared_fc <- combined %>%
   select(ID, Description, Cluster, FoldEnrichment, p.adjust, p.adjust_hyper) %>%
@@ -414,17 +425,6 @@ write.table(
   quote = FALSE,
   row.names = FALSE
 )
-
-extract_genes_for_terms <- function(res, tbl, term_descriptions) {
-  term_ids <- tbl$id[tbl$description %in% term_descriptions]
-  if (!length(term_ids)) {
-    return(character(0))
-  }
-  unique(unlist(lapply(term_ids, function(tid) {
-    assoc <- getRegionGeneAssociations(res, term_id = tid)
-    unique(unlist(assoc$annotated_genes))
-  })))
-}
 
 fin_terms <- c("fin morphogenesis", "fin development")
 fin_skeletal_terms <- c(

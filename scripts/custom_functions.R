@@ -1,142 +1,3 @@
-#' Calculate A/T Nucleotide Frequencies in Binned Windows
-#'
-#' Calculates the frequency of A or T nucleotides within bins of a user-specified width across each sequence in a \code{DNAStringSet} object.
-#'
-#' @param dnastringset DNAStringSet. Input set of DNA sequences (e.g., from Biostrings).
-#' @param bin_width Integer (default 10). Width of the bins (in bases) to split each sequence for frequency calculation.
-#'
-#' @return Matrix of A/T frequencies. Rows correspond to individual sequences; columns correspond to bins along the sequence.
-#'
-#' @examples
-#' # Example usage:
-#' # calculate_at_frequencies(dnastringset, bin_width = 50)
-#'
-#' @import Biostrings IRanges stringr
-#' @export
-calculate_at_frequencies <- function(dnastringset, bin_width = 10) {
-  max_seq_length <- max(width(dnastringset))
-  bins <- IRanges(
-    start = seq(1, max_seq_length - bin_width + 1, by = bin_width),
-    width = bin_width
-  )
-  at_frequencies_matrix <- matrix(
-    0,
-    nrow = length(dnastringset),
-    ncol = length(bins)
-  )
-
-  for (i in 1:length(dnastringset)) {
-    cat(
-      "\r",
-      paste0("Calculating: ", round((i / length(dnastringset)) * 100, 2), "%"),
-      "\b\b",
-      file = stdout()
-    )
-
-    for (j in 1:length(bins)) {
-      bin_seq <- subseq(dnastringset[i], bins[j])
-      at_freq <- sum(str_count(as.character(bin_seq), "A|T")) / bin_width
-      at_frequencies_matrix[i, j] <- at_freq
-    }
-  }
-  return(at_frequencies_matrix)
-}
-
-
-#' Generate Random DNA Sequences of Fixed Window Size
-#'
-#' Randomly samples a defined number of windows of fixed size from a set of DNA sequences.
-#'
-#' All input sequences are concatenated into one super-sequence before sampling.
-#'
-#' @param dna_string_set DNAStringSet. Input set of DNA sequences to sample from.
-#' @param window_size Integer. Length (in bases) of each random window to sample.
-#' @param num_sequences Integer. Number of random sequences (windows) to return.
-#'
-#' @return DNAStringSet with randomly sampled sequences.
-#'
-#' @examples
-#' # generate_random_sequences(dnastringset, 100, 10)
-#'
-#' @import Biostrings
-#' @export
-generate_random_sequences <- function(
-  dna_string_set,
-  window_size,
-  num_sequences
-) {
-  # Collapse all sequences into a single sequence
-  collapsed_sequence <- paste(dna_string_set, collapse = "")
-
-  # Initialize a DNAStringSet to store the sampled sequences
-  sampled_sequences <- DNAStringSet()
-
-  while (length(sampled_sequences) < num_sequences) {
-    max_start_pos <- width(collapsed_sequence) - window_size
-    start_pos <- sample(1:max_start_pos, 1)
-
-    temp <- subseq(
-      collapsed_sequence,
-      start = start_pos,
-      end = start_pos + window_size - 1
-    )
-    sampled_sequences <- c(sampled_sequences, temp)
-  }
-
-  return(sampled_sequences)
-}
-
-
-#' Extract Genomic Windows and Perform Motif Enrichment Analysis
-#'
-#' Extracts DNA sequences defined by genomic intervals in a \code{GRanges} object
-#' and performs motif enrichment analysis using AME (from the MEME Suite).
-#'
-#' @param GRangeObj GRanges object. Genomic intervals to extract.
-#' @param SequenceObj Named DNAStringSet object. Genome sequences, indexed by chromosome name.
-#'
-#' @details
-#' Each interval from \code{GRangeObj} is used to extract the corresponding sequence from \code{SequenceObj}.
-#' Motif enrichment analysis is conducted on these sequences via the \code{runAme} function.
-#'
-#' @return A runAme enrichment result object.
-#'
-#' @examples
-#' # enrich <- subtract_and_enrich(granges, dnasset)
-#'
-#' @import Biostrings GenomicRanges
-#' @export
-subtract_and_enrich <- function(GRangeObj, SequenceObj) {
-  targets <- DNAStringSet()
-
-  for (i in 1:length(start(GRangeObj))) {
-    tryCatch(
-      {
-        start_temp <- start(GRangeObj)[i]
-        end_temp <- end(GRangeObj)[i]
-        chr_temp <- as.character(GRangeObj@seqnames[i])
-
-        temp_seq <- subseq(SequenceObj[chr_temp], start_temp, end_temp)
-
-        targets <- c(targets, as.character(temp_seq))
-      },
-      error = function(e) {
-        cat("Error occurred in iteration", i, ": ", conditionMessage(e), "\n")
-      }
-    )
-  }
-
-  enrich <- runAme(
-    targets,
-    meme_path = "~/Documents/Tools/meme/bin/",
-    database = "~/Documents/Tools/meme/Databases/motif_databases/JASPAR/JASPAR2022_CORE_vertebrates_non-redundant_v2.meme",
-    silent = TRUE
-  )
-
-  return(enrich)
-}
-
-
 # ---------- helper: stable IDs ----------
 gr_id <- function(gr, include_strand = FALSE) {
   if (!include_strand) {
@@ -397,8 +258,6 @@ plot_gviz_zoom <- function(
 }
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
 # Tolerance-aware overlap: returns indices of `query` overlapping `subject`.
 # `slack = 0` is strict overlap; > 0 allows that many bp of coordinate drift
 # (useful for lifted-over coordinates).
@@ -429,135 +288,179 @@ analyse_cne_universe <- function(
   anno_gr,
   label,
   atac_peaks_gr,
-  enh_gr,
-  yuesong_gr,
+  enh_gr = NULL,
+  yuesong_gr = NULL,
   fin_geneIds = NULL,
   slack = 0L,
   out_dir = '../output'
 ) {
-  # 1. Universe: unique, non-exonic CNE annotations from this category
+  # 1. Universe
   universe_gr <- unique(anno_gr[!str_detect(anno_gr$annotation, "Exon")])
   n_uni <- length(universe_gr)
 
-  # 2. Set memberships as positional indices into universe_gr
+  # 2. Membership indices
   in_atac <- overlapping_idx(universe_gr, atac_peaks_gr, slack = slack)
-  in_chan <- overlapping_idx(universe_gr, enh_gr, slack = slack)
-  in_yue <- overlapping_idx(universe_gr, yuesong_gr, slack = slack)
+
+  in_chan <- if (!is.null(enh_gr)) {
+    overlapping_idx(universe_gr, enh_gr, slack = slack)
+  } else {
+    integer(0)
+  }
+
+  in_yue <- if (!is.null(yuesong_gr)) {
+    overlapping_idx(universe_gr, yuesong_gr, slack = slack)
+  } else {
+    integer(0)
+  }
+
   in_active <- which(
     !is.na(mcols(universe_gr)$flank_is_active) &
       mcols(universe_gr)$flank_is_active
   )
+
   in_fin <- if (length(fin_geneIds)) {
     which(universe_gr$geneId %in% fin_geneIds)
   } else {
     integer(0)
   }
 
-  # 3. Binary membership matrix (rows = CNEs, cols = sets)
+  # 3. Membership table
   universe_col <- paste(label, "CNEs")
+
   mem <- data.frame(
-    placeholder = rep(TRUE, n_uni),
+    placeholder = TRUE,
     `ATAC peaks` = seq_len(n_uni) %in% in_atac,
     `Active genes nearby` = seq_len(n_uni) %in% in_active,
     `Fin-dev genes nearby` = seq_len(n_uni) %in% in_fin,
     check.names = FALSE
   )
+
   names(mem)[1] <- universe_col
 
-  # Drop empty sets so UpSet / Jaccard stay legible (universe column survives,
-  # since it's all TRUE).
+  if (!is.null(enh_gr)) {
+    mem$`Chan enhancers` <- seq_len(n_uni) %in% in_chan
+  }
+
+  if (!is.null(yuesong_gr)) {
+    mem$`Yuesong CNEs` <- seq_len(n_uni) %in% in_yue
+  }
+
   mem <- mem[, vapply(mem, any, logical(1)), drop = FALSE]
 
-  # 4. UpSet plot
+  # 4. UpSet
   comb <- make_comb_mat(as.matrix(mem + 0L))
+
   pdf(
-    file.path(out_dir, sprintf('upset_overlaps_%s.pdf', label)),
+    file.path(out_dir, sprintf("upset_overlaps_%s.pdf", label)),
     width = 10,
     height = 6
   )
-  draw(UpSet(
-    comb,
-    set_order = colnames(mem),
-    top_annotation = upset_top_annotation(comb, add_numbers = TRUE),
-    right_annotation = upset_right_annotation(comb, add_numbers = TRUE)
-  ))
+
+  draw(
+    UpSet(
+      comb,
+      set_order = colnames(mem),
+      top_annotation = upset_top_annotation(comb, add_numbers = TRUE),
+      right_annotation = upset_right_annotation(comb, add_numbers = TRUE)
+    )
+  )
+
   dev.off()
 
-  # 5. Jaccard heatmap on the same matrix
+  # 5. Jaccard
   jac <- jaccard_mat(mem)
+
   col_fun <- colorRamp2(
     c(0, 0.25, 0.5, 1),
     c("#f7fbff", "#9ecae1", "#3182bd", "#08306b")
   )
+
   ha_row <- rowAnnotation(
     `Set size` = anno_barplot(
       colSums(mem),
       bar_width = 0.7,
       gp = gpar(fill = "#4DAACC", col = NA),
-      axis_param = list(side = "top", labels_rot = 0),
+      axis_param = list(side = "top"),
       width = unit(3, "cm")
     )
   )
 
   pdf(
-    file.path(out_dir, sprintf('jaccard_overlap_heatmap_%s.pdf', label)),
+    file.path(out_dir, sprintf("jaccard_overlap_heatmap_%s.pdf", label)),
     width = 8,
     height = 7
   )
-  draw(Heatmap(
-    jac,
-    name = "Jaccard\nsimilarity",
-    col = col_fun,
-    cell_fun = function(j, i, x, y, w, h, fill) {
-      grid.text(
-        sprintf("%.2f", jac[i, j]),
-        x,
-        y,
-        gp = gpar(fontsize = 9, col = ifelse(jac[i, j] > 0.4, "white", "black"))
-      )
-    },
-    cluster_rows = TRUE,
-    cluster_columns = TRUE,
-    show_row_dend = FALSE,
-    show_column_dend = FALSE,
-    row_names_side = "left",
-    column_names_rot = 35,
-    right_annotation = ha_row,
-    rect_gp = gpar(col = "white", lwd = 1.5),
-    heatmap_legend_param = list(
-      direction = "horizontal",
-      title_position = "topcenter"
+
+  draw(
+    Heatmap(
+      jac,
+      name = "Jaccard\nsimilarity",
+      col = col_fun,
+      cluster_rows = TRUE,
+      cluster_columns = TRUE,
+      show_row_dend = FALSE,
+      show_column_dend = FALSE,
+      right_annotation = ha_row
     )
-  ))
+  )
+
   dev.off()
 
-  # 6. Final tidy table (input to app.R) — same layout as before, plus the
-  #    binary membership columns.
+  # 6. Export
   final_df <- as.data.frame(universe_gr)
-  final_df$in_atac_peak <- as.integer(seq_len(n_uni) %in% in_atac)
-  final_df$nearby_gene_active <- as.integer(seq_len(n_uni) %in% in_active)
-  final_df$nearby_gene_fin_dev <- as.integer(seq_len(n_uni) %in% in_fin)
-  final_df$overlaps_chan_enhancer <- as.integer(seq_len(n_uni) %in% in_chan)
-  final_df$overlaps_yuesong_cne <- as.integer(seq_len(n_uni) %in% in_yue)
+
+  final_df$in_atac_peak <-
+    as.integer(seq_len(n_uni) %in% in_atac)
+
+  final_df$nearby_gene_active <-
+    as.integer(seq_len(n_uni) %in% in_active)
+
+  final_df$nearby_gene_fin_dev <-
+    as.integer(seq_len(n_uni) %in% in_fin)
+
+  if (!is.null(enh_gr)) {
+    final_df$overlaps_chan_enhancer <-
+      as.integer(seq_len(n_uni) %in% in_chan)
+  }
+
+  if (!is.null(yuesong_gr)) {
+    final_df$overlaps_yuesong_cne <-
+      as.integer(seq_len(n_uni) %in% in_yue)
+  }
 
   stopifnot(
     sum(final_df$in_atac_peak) == length(in_atac),
     sum(final_df$nearby_gene_active) == length(in_active),
-    sum(final_df$nearby_gene_fin_dev) == length(in_fin),
-    sum(final_df$overlaps_chan_enhancer) == length(in_chan),
-    sum(final_df$overlaps_yuesong_cne) == length(in_yue)
+    sum(final_df$nearby_gene_fin_dev) == length(in_fin)
   )
+
+  if (!is.null(enh_gr)) {
+    stopifnot(
+      sum(final_df$overlaps_chan_enhancer) == length(in_chan)
+    )
+  }
+
+  if (!is.null(yuesong_gr)) {
+    stopifnot(
+      sum(final_df$overlaps_yuesong_cne) == length(in_yue)
+    )
+  }
 
   write.table(
     final_df,
-    file.path(out_dir, sprintf('%s_cne_final_table.tsv', label)),
-    sep = '\t',
+    file.path(out_dir, sprintf("%s_cne_final_table.tsv", label)),
+    sep = "\t",
     quote = FALSE,
-    col.names = TRUE,
     row.names = FALSE
   )
 
-  invisible(list(universe = universe_gr, mem = mem, final = final_df))
+  invisible(
+    list(
+      universe = universe_gr,
+      mem = mem,
+      final = final_df
+    )
+  )
 }
 
 overlapping_idx <- function(query, subject, slack = 50L) {
@@ -642,4 +545,16 @@ run_simplify <- function(
     row.names = FALSE
   )
   invisible(go_clusters)
+}
+
+
+extract_genes_for_terms <- function(res, tbl, term_descriptions) {
+  term_ids <- tbl$id[tbl$description %in% term_descriptions]
+  if (!length(term_ids)) {
+    return(character(0))
+  }
+  unique(unlist(lapply(term_ids, function(tid) {
+    assoc <- getRegionGeneAssociations(res, term_id = tid)
+    unique(unlist(assoc$annotated_genes))
+  })))
 }
