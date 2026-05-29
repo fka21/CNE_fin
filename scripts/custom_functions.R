@@ -280,7 +280,7 @@ analyse_cne_universe <- function(
   out_dir = '../output'
 ) {
   # 1. Universe
-  universe_gr <- unique(anno_gr[!str_detect(anno_gr$annotation, "Exon")])
+  universe_gr <- unique(non_exon(anno_gr))
   n_uni <- length(universe_gr)
 
   # 2. Membership indices
@@ -299,8 +299,8 @@ analyse_cne_universe <- function(
   }
 
   in_active <- which(
-    !is.na(mcols(universe_gr)$flank_is_active) &
-      mcols(universe_gr)$flank_is_active
+    !is.na(mcols(universe_gr)$is_active) &
+      mcols(universe_gr)$is_active
   )
 
   in_fin <- if (length(fin_geneIds)) {
@@ -316,7 +316,6 @@ analyse_cne_universe <- function(
     placeholder = TRUE,
     `ATAC peaks` = seq_len(n_uni) %in% in_atac,
     `Active genes nearby` = seq_len(n_uni) %in% in_active,
-    `Fin-dev genes nearby` = seq_len(n_uni) %in% in_fin,
     check.names = FALSE
   )
 
