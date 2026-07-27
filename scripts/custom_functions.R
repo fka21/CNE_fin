@@ -106,10 +106,10 @@ plot_gviz_zoom <- function(
   height = 8,
   genome = NA,
   gene_id_col = "gene_id",
-  gene_activity = NULL, # <- NEW (tibble/data.frame with gene_id + is_active)
-  active_col = "royalblue", # <- NEW
-  inactive_col = "skyblue", # <- NEW
-  unknown_col = "grey80", # <- NEW (if a gene_id isn't in the table)
+  gene_activity = NULL,
+  active_col = "royalblue",
+  inactive_col = "skyblue",
+  unknown_col = "grey80",
   teleost_fill = NULL,
   verte_fill = NULL,
   atac_fill = NULL,
@@ -176,15 +176,12 @@ plot_gviz_zoom <- function(
       stop("`gene_activity` must contain columns: gene_id, is_active")
     }
 
-    # robust lookup: named logical vector
-    # (if duplicated gene_ids exist, keep the first; you can change this if needed)
     ga <- gene_activity[, c("gene_id", "is_active")]
     ga <- ga[!is.na(ga$gene_id), ]
     ga <- ga[!duplicated(ga$gene_id), ]
     active_lookup <- setNames(as.logical(ga$is_active), ga$gene_id)
 
-    is_active_vec <- unname(active_lookup[group_vec]) # aligns to gene_of_interest rows
-    # genes missing from lookup become NA -> unknown_col
+    is_active_vec <- unname(active_lookup[group_vec])
     gene_fill <- ifelse(
       is.na(is_active_vec),
       unknown_col,
@@ -199,8 +196,8 @@ plot_gviz_zoom <- function(
     name = "Genes",
     group = group_vec,
     showId = show_id,
-    fill = gene_fill, # <- the key line
-    col = gene_col, # <- outlines match fill
+    fill = gene_fill,
+    col = gene_col,
     background.title = background_title
   )
 
@@ -260,7 +257,7 @@ plot_gviz_zoom <- function(
 
 # Tolerance-aware overlap: returns indices of `query` overlapping `subject`.
 # `slack = 0` is strict overlap; > 0 allows that many bp of coordinate drift
-# (useful for lifted-over coordinates).
+# (useful for lifted-over coordinates). All call sites pass `slack` explicitly.
 overlapping_idx <- function(query, subject, slack = 0L) {
   hits <- findOverlaps(query, subject, maxgap = slack, ignore.strand = TRUE)
   unique(queryHits(hits))
@@ -408,16 +405,6 @@ analyse_cne_universe <- function(
   )
 }
 
-overlapping_idx <- function(query, subject, slack = 50L) {
-  hits <- findOverlaps(
-    query,
-    subject,
-    maxgap = slack, # allow up to `slack` bp gap between ranges
-    ignore.strand = TRUE
-  )
-  unique(queryHits(hits))
-}
-
 
 # Export the non-exonic annotated CNEs as TSVs (kept here because these are
 # pure descriptive products of the preprocessing step).
@@ -526,4 +513,300 @@ relabel_seqlevels <- function(x, genome_df) {
     match(seqlevels(x), genome_df$`Sequence name`)
   ]
   x
+}
+
+
+# ── CNE BED input ────────────────────────────────────────────────────────────
+
+# phastCons BED output as written by the Snakemake workflow. BED is 0-based
+# half-open, so `start` is shifted to 1-based inclusive on read. Seqnames are
+# taken from column 4 (the phastCons element name carries the sequence
+# accession) with any version suffix stripped, matching the naming used by the
+# TxDb and the chrom-size tables.
+read_cne_bed <- function(path, min_width = 25L) {
+  bed <- readr::read_tsv(
+    path,
+    col_names = c(
+      "chromosome",
+      "start",
+      "end",
+      "cne_name",
+      "phastcons_score",
+      "strand"
+    ),
+    show_col_types = FALSE
+  )
+
+  gr <- GRanges(
+    seqnames = sub("\\.[0-9]+$", "", bed$cne_name),
+    ranges = IRanges(bed$start + 1L, bed$end),
+    phastcons = bed$phastcons_score
+  )
+
+  gr[width(gr) > min_width]
+}
+
+
+# ── Reviewer response: SYMBOL mapping rate ───────────────────────────────────
+
+# Fraction of the custom GFF annotation that reaches org.*.eg.db, plus the
+# fraction of GO gene-set members that receive a regulatory domain. The second
+# rate is what actually sets the universe of the GREAT binomial test, so both
+# are reported.
+symbol_mapping_table <- function(gene_gr, extended_tss, gene_sets, orgdb) {
+  sym_anno <- unique(as.character(mcols(gene_gr)$gene_id))
+  sym_anno <- sym_anno[!is.na(sym_anno) & nzchar(sym_anno)]
+
+  sym_org <- AnnotationDbi::keys(orgdb, "SYMBOL")
+  sym_domain <- unique(as.character(mcols(extended_tss)$gene_id))
+  sym_sets <- unique(unlist(gene_sets, use.names = FALSE))
+
+  n_matched <- sum(sym_anno %in% sym_org)
+  n_sets_dom <- sum(sym_sets %in% sym_domain)
+
+  tibble::tibble(
+    metric = c(
+      "Genes in custom annotation",
+      "Matched to org.Dr.eg.db SYMBOL",
+      "Unmatched (dropped)",
+      "Regulatory domains built",
+      "GO gene-set members",
+      "GO members with a regulatory domain"
+    ),
+    n = c(
+      length(sym_anno),
+      n_matched,
+      length(sym_anno) - n_matched,
+      length(extended_tss),
+      length(sym_sets),
+      n_sets_dom
+    ),
+    percent = c(
+      100,
+      round(100 * n_matched / length(sym_anno), 1),
+      round(100 * (length(sym_anno) - n_matched) / length(sym_anno), 1),
+      NA_real_,
+      100,
+      round(100 * n_sets_dom / length(sym_sets), 1)
+    )
+  )
+}
+
+
+# ── Reviewer response: domain-normalised CNE hotspots ────────────────────────
+
+# Per-gene CNE density scored against the same GREAT regulatory domains used
+# for the GO analysis. A CNE is counted once per overlapping domain, so the
+# total number of CNE-domain assignments is the binomial n and each domain's
+# success probability is its share of the total domain space. Domain length is
+# therefore part of the null expectation rather than an unmodelled confounder,
+# which is what raw nearest-gene counts cannot do.
+hotspot_domains <- function(cne_gr, extended_tss, label = NA_character_) {
+  shared <- intersect(seqlevels(cne_gr), seqlevels(extended_tss))
+  if (!length(shared)) {
+    stop("`cne_gr` and `extended_tss` share no seqlevels.")
+  }
+
+  cne <- keepSeqlevels(cne_gr, shared, pruning.mode = "coarse")
+  dom <- keepSeqlevels(extended_tss, shared, pruning.mode = "coarse")
+
+  hits <- findOverlaps(cne, dom, ignore.strand = TRUE)
+  n_assign <- length(hits)
+  total_space <- sum(as.numeric(width(dom)))
+
+  obs_tbl <- tibble::tibble(idx = subjectHits(hits)) |>
+    dplyr::count(idx, name = "observed")
+
+  tibble::tibble(
+    idx = seq_along(dom),
+    gene = as.character(mcols(dom)$gene_id),
+    domain_width = as.numeric(width(dom))
+  ) |>
+    dplyr::left_join(obs_tbl, by = "idx") |>
+    dplyr::mutate(
+      set = label,
+      observed = dplyr::coalesce(observed, 0L),
+      expected = n_assign * (domain_width / total_space),
+      obs_exp = observed / expected,
+      per_100kb = observed / (domain_width / 1e5),
+      p_binom = stats::pbinom(
+        observed - 1L,
+        size = n_assign,
+        prob = domain_width / total_space,
+        lower.tail = FALSE
+      ),
+      fdr = stats::p.adjust(p_binom, method = "BH")
+    ) |>
+    dplyr::select(-idx) |>
+    dplyr::relocate(set) |>
+    dplyr::arrange(fdr, dplyr::desc(obs_exp))
+}
+
+
+# Teleost-specific duplicates arising from the 3R whole-genome duplication are
+# conventionally named with `a`/`b` suffixes in ZFIN. Flagging them keeps
+# ohnologue pairs (ryr1a/ryr1b) visible as separate loci in the hotspot table
+# rather than being read as a single inflated locus.
+flag_ohnologue_pairs <- function(hotspots) {
+  stem <- sub("([ab])$", "", hotspots$gene)
+  suffixed <- grepl("[ab]$", hotspots$gene)
+  stem_counts <- table(stem[suffixed])
+
+  hotspots |>
+    dplyr::mutate(
+      ohnologue_stem = ifelse(
+        suffixed & stem %in% names(stem_counts)[stem_counts >= 2],
+        stem,
+        NA_character_
+      ),
+      is_ohnologue = !is.na(ohnologue_stem)
+    )
+}
+
+
+# ── Circos element density ───────────────────────────────────────────────────
+
+# Reusable version of the element-density circos so that the zebrafish and
+# human panels are drawn by identical code. `tracks` is an ordered, named list
+# of GRanges already relabelled to the chr* scheme; the first element is the
+# outermost track. `chrom_sizes` is a named numeric vector giving the plotting
+# order.
+plot_cne_circos <- function(
+  tracks,
+  chrom_sizes,
+  filepath,
+  track_colours,
+  legend_labels = names(tracks),
+  bin_size = 2e6,
+  track_height = 0.12,
+  axis_step = NULL,
+  label_gap = 0.30,
+  width = 9,
+  height = 9,
+  legend_title = NULL
+) {
+  stopifnot(length(tracks) == length(track_colours))
+
+  chroms <- names(chrom_sizes)
+  bins <- tileGenome(
+    chrom_sizes,
+    tilewidth = bin_size,
+    cut.last.tile.in.chrom = TRUE
+  )
+
+  # A track with no elements on some chromosome would otherwise drop that
+  # seqlevel and fail the keepSeqlevels() call inside bin_granges().
+  tracks <- lapply(tracks, function(x) {
+    x <- x[as.character(seqnames(x)) %in% chroms]
+    seqlevels(x) <- chroms
+    x
+  })
+
+  binned <- lapply(tracks, bin_granges, bins = bins, autosomes = chroms)
+
+  # Axis ticks every `axis_step` bp, chosen from the longest chromosome so the
+  # same function works for a 78 Mb zebrafish chromosome and a 248 Mb human one.
+  if (is.null(axis_step)) {
+    axis_step <- if (max(chrom_sizes) > 150e6) 50e6 else 20e6
+  }
+  ticks <- seq(0, max(chrom_sizes), by = axis_step)
+  tick_labels <- paste0(ticks / 1e6, " Mb")
+
+  xlim <- cbind(start = rep(1, length(chroms)), end = as.numeric(chrom_sizes))
+
+  pdf(filepath, width = width, height = height)
+  on.exit(
+    {
+      circos.clear()
+      dev.off()
+    },
+    add = TRUE
+  )
+
+  circos.clear()
+  circos.par(
+    start.degree = 90,
+    gap.degree = c(rep(1, length(chroms) - 1), 4),
+    points.overflow.warning = FALSE
+  )
+  circos.initialize(factors = chroms, xlim = xlim)
+
+  for (i in seq_along(binned)) {
+    df <- binned[[i]]
+    col_i <- track_colours[[i]]
+    draw_axis <- i == 1L
+
+    circos.trackPlotRegion(
+      factors = df$`Chromosome name`,
+      x = df$start,
+      y = df$hit_count,
+      track.height = track_height,
+      panel.fun = function(x, y) {
+        circos.lines(x, y, col = col_i, area = TRUE, lwd = 1, type = "s")
+        circos.segments(
+          x0 = x,
+          y0 = 0,
+          x1 = x,
+          y1 = y,
+          col = adjustcolor("grey70", alpha.f = 0.3)
+        )
+        if (draw_axis) {
+          circos.xaxis(
+            labels.facing = "clockwise",
+            labels.niceFacing = TRUE,
+            major.at = ticks,
+            labels = tick_labels,
+            labels.cex = 0.5
+          )
+        }
+      }
+    )
+  }
+
+  # Chromosome labels placed relative to the first track's own y-range, so the
+  # offset does not have to be retuned when the count scale changes.
+  # Place chromosome labels inside the innermost track
+  innermost_track <- length(binned)
+
+  for (chr in chroms) {
+    ylim_inner <- get.cell.meta.data(
+      "ylim",
+      sector.index = chr,
+      track.index = innermost_track
+    )
+
+    circos.text(
+      sector.index = chr,
+      track.index = innermost_track,
+      x = as.numeric(chrom_sizes[[chr]]) / 2,
+      y = ylim_inner[1] - diff(ylim_inner) * label_gap, # Offsets inwards past the bottom of the inner track
+      labels = chr,
+      facing = "clockwise", # Keeps short labels legible without bending distortion
+      niceFacing = TRUE,
+      cex = 0.55,
+      adj = c(0, 0.5) # Smooth center alignment
+    )
+  }
+
+  for (i in seq_along(binned)) {
+    circos.yaxis(
+      sector.index = chroms[1],
+      track.index = i,
+      labels.cex = 0.45
+    )
+  }
+
+  par(fig = c(0, 1, 0, 1), new = TRUE)
+  plot.new()
+  legend(
+    "center",
+    legend = legend_labels,
+    fill = unlist(track_colours),
+    border = unlist(track_colours),
+    bty = "n",
+    cex = 0.9,
+    title = legend_title
+  )
+
+  invisible(binned)
 }

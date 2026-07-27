@@ -12,74 +12,57 @@ pacman::p_load(
 setwd(this.path::here())
 source("custom_functions.R")
 
+preproc_dir <- "../output/preprocessed"
+great_dir <- "../output/great"
+report_dir <- "../output/reports"
+dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
+
 ### --- Load preprocessed objects -------------------------------------------
 actinopteriigy_cne_gr <- readRDS(
-  "../output/preprocessed/actinopteriigy_cne_gr.rds"
+  file.path(preproc_dir, "actinopteriigy_cne_gr.rds")
 )
 gnathostomata_cne_gr <- readRDS(
-  "../output/preprocessed/gnathostomata_cne_gr.rds"
+  file.path(preproc_dir, "gnathostomata_cne_gr.rds")
 )
-peak_anno_list <- readRDS("../output/preprocessed/peak_anno_list.rds")
-gene_activity <- readRDS("../output/preprocessed/gene_activity.rds")
+peak_anno_list <- readRDS(file.path(preproc_dir, "peak_anno_list.rds"))
+gene_activity <- readRDS(file.path(preproc_dir, "gene_activity.rds"))
+
+# Built once in script 1 and reused here rather than re-read with a different
+# coordinate convention.
+atac_peaks_gr <- readRDS(file.path(preproc_dir, "atac_peaks_gr.rds"))
+enh_gr <- readRDS(file.path(preproc_dir, "chan_enhancers_gr.rds"))
+actinopteriigy_cne_ov <- readRDS(
+  file.path(preproc_dir, "actinopteriigy_cne_ov.rds")
+)
 
 ### --- Load rGREAT-derived gene lists --------------------------------------
-fg <- readRDS("../output/great/filtered_genes_for_downstream.rds")
+fg <- readRDS(file.path(great_dir, "filtered_genes_for_downstream.rds"))
 filtered_genes_fin <- fg$fin
 filtered_genes_skeletal_fin <- fg$fin_skeletal
 filtered_genes <- fg$all_signif_actino # for the "any signif GO" filters
 
-great_tbl_actino <- read_tsv("../output/great/great_actinopterygii_GObp.tsv")
+great_tbl_actino <- read_tsv(
+  file.path(great_dir, "great_actinopterygii_GObp.tsv"),
+  show_col_types = FALSE
+)
+hotspots <- readRDS(file.path(great_dir, "cne_hotspots.rds"))
 
 drer_anno <- txdbmaker::makeTxDbFromGFF(
   "../ancilliary_files/drer.gff",
   organism = "Danio rerio"
 )
 
-### --- YueSong overlap (liftover-based) ------------------------------------
-sheet7_data <- read_excel(
-  "../input/YueSong-et-al_2025.xlsx",
-  sheet = 7,
-  col_names = TRUE,
-  skip = 1
+### --- YueSong overlap set --------------------------------------------------
+# Coordinates come straight from the liftover overlap computed in script 1; the
+# earlier reconstruction of cne_name by pasting ".1" onto the chromosome assumed
+# every accession carried version 1.
+yuesong_gr <- GRanges(
+  seqnames = sub("\\.[0-9]+$", "", actinopteriigy_cne_ov$cne_name),
+  ranges = IRanges(
+    start = actinopteriigy_cne_ov$start,
+    end = actinopteriigy_cne_ov$end
+  )
 )
-alias <- read_tsv(
-  "https://hgdownload.soe.ucsc.edu/hubs/GCF/000/002/035/GCF_000002035.6/GCF_000002035.6.chromAlias.txt",
-  comment = "#",
-  show_col_types = FALSE,
-  col_names = FALSE
-)
-sheet7_data$Chromosome <- alias$X5[match(sheet7_data$Chromosome, alias$X1)]
-
-sheet7_gr <- GRanges(
-  seqnames = sheet7_data[[1]],
-  ranges = IRanges(start = sheet7_data[[2]], end = sheet7_data[[3]]),
-  mcols = sheet7_data[, 4:ncol(sheet7_data)]
-)
-
-liftover <- read_tsv(
-  "../input/ucsc_GRCz11-GRCz12_liftover_actinopteriigy_cne.bed",
-  col_names = FALSE
-)
-liftover_gr <- GRanges(
-  seqnames = liftover$X1,
-  ranges = IRanges(start = liftover$X2 + 1, end = liftover$X3),
-  strand = "*",
-  cne_name = liftover$X4
-)
-
-hits <- findOverlaps(liftover_gr, sheet7_gr, ignore.strand = TRUE)
-overlapping_cne_names <- unique(mcols(liftover_gr)$cne_name[queryHits(hits)])
-
-# Need the raw CNE table for chrom/start/end strings used by the UpSet plot
-actinopteriigy_cne <- as.data.frame(actinopteriigy_cne_gr) |>
-  transmute(
-    chromosome = as.character(seqnames),
-    start,
-    end,
-    cne_name = paste0(chromosome, ".1")
-  ) # legacy concat for sheet7 key
-actinopteriigy_cne_ov <- actinopteriigy_cne |>
-  filter(cne_name %in% overlapping_cne_names)
 
 ### --- GO-derived gene filtering on peak annotations -----------------------
 anno_actino <- non_exon(peak_anno_list$actinopteriigy_CNE@anno)
@@ -111,10 +94,116 @@ write.table(
   row.names = FALSE
 )
 
+###############################################################################
+### CNE HOTSPOTS — DOMAIN-NORMALISED FIGURE                                 ###
+###############################################################################
+# Bar height is observed/expected against the GREAT regulatory-domain length, so
+# loci are ranked by CNE density rather than by size. Raw counts and domain
+# extents are printed on each bar so the two quantities can be compared
+# directly, and 3R ohnologue pair members are shaded separately because each
+# paralogue carries its own domain.
+
+top_n_hotspots <- 25
+
+hotspot_plot_df <- hotspots %>%
+  filter(set == "actinopterygii", expected > 0, observed > 0) %>%
+  slice_min(fdr, n = top_n_hotspots, with_ties = FALSE) %>%
+  mutate(
+    gene = fct_reorder(gene, obs_exp),
+    duplicate_status = if_else(
+      is_ohnologue,
+      "3R ohnologue pair member",
+      "single-copy locus"
+    )
+  )
+
+p_hotspots <- ggplot(
+  hotspot_plot_df,
+  aes(gene, obs_exp, fill = duplicate_status)
+) +
+  geom_col(colour = "black", alpha = 0.85, width = 0.75) +
+  geom_hline(yintercept = 1, linetype = "dashed", colour = "grey40") +
+  geom_text(
+    aes(
+      label = paste0(
+        observed,
+        " CNE / ",
+        round(domain_width / 1e3),
+        " kb"
+      )
+    ),
+    hjust = -0.08,
+    size = 2.6
+  ) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c(
+      "3R ohnologue pair member" = "#E69F00",
+      "single-copy locus" = "grey75"
+    )
+  ) +
+  expand_limits(y = max(hotspot_plot_df$obs_exp) * 1.3) +
+  theme_bw(base_size = 11) +
+  theme(legend.position = "bottom", panel.grid.major.y = element_blank()) +
+  labs(
+    x = NULL,
+    y = "Observed / expected CNEs per regulatory domain",
+    fill = NULL
+  )
+
+ggsave(
+  "../output/cne_hotspots_domain_normalised.pdf",
+  p_hotspots,
+  width = 7.5,
+  height = 8
+)
+
+# Companion panel showing the size dependence that motivates the
+# normalisation: raw counts scale with domain length across all loci.
+p_size_bias <- hotspots %>%
+  filter(set == "actinopterygii", observed > 0) %>%
+  ggplot(aes(domain_width / 1e3, observed)) +
+  geom_point(alpha = 0.2, size = 0.9) +
+  geom_smooth(method = "lm", se = FALSE, colour = "#CC79A7", linewidth = 0.8) +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme_bw(base_size = 11) +
+  labs(
+    x = "Regulatory domain length (kb)",
+    y = "CNEs per domain"
+  )
+
+ggsave(
+  "../output/cne_hotspots_size_bias.pdf",
+  p_size_bias,
+  width = 5,
+  height = 4
+)
+
+hotspot_size_correlation <- hotspots %>%
+  filter(observed > 0) %>%
+  group_by(set) %>%
+  summarise(
+    spearman_count_vs_domain_length = round(
+      cor(observed, domain_width, method = "spearman"),
+      3
+    ),
+    spearman_obsexp_vs_domain_length = round(
+      cor(obs_exp, domain_width, method = "spearman"),
+      3
+    ),
+    .groups = "drop"
+  )
+write_tsv(
+  hotspot_size_correlation,
+  file.path(report_dir, "hotspot_size_bias_correlation.tsv")
+)
+print(hotspot_size_correlation)
+
 ### --- Active-gene filtered exports ----------------------------------------
 export_active <- as.data.frame(
   anno_actino[
-    anno_actino$is_active == TRUE
+    which(anno_actino$is_active)
   ]
 )
 write.table(
@@ -126,14 +215,14 @@ write.table(
 )
 
 write.table(
-  filter(actinopteriigy_filtered_fin, is_active == TRUE),
+  filter(actinopteriigy_filtered_fin, is_active),
   "../output/actinopteriigy_GO-fin_specific_cne_active_genes.tsv",
   sep = "\t",
   quote = FALSE,
   row.names = FALSE
 )
 write.table(
-  filter(actinopteriigy_filtered_skeletal_fin, is_active == TRUE),
+  filter(actinopteriigy_filtered_skeletal_fin, is_active),
   "../output/actinopteriigy_GO-fin-skeletal_specific_cne_active_genes.tsv",
   sep = "\t",
   quote = FALSE,
@@ -141,7 +230,7 @@ write.table(
 )
 
 write.table(
-  as.data.frame(anno_gnatho[!str_detect(anno_gnatho$annotation, "Exon")]),
+  as.data.frame(anno_gnatho),
   "../output/gnathostomata_specific_cne.tsv",
   sep = "\t",
   quote = FALSE,
@@ -149,30 +238,7 @@ write.table(
 )
 
 ### --- ATAC-seq overlap ----------------------------------------------------
-atac_peaks <- read_tsv(
-  "../input/consensus_peaks.mLb.clN.bed",
-  col_names = FALSE
-)
-colnames(atac_peaks) <- c(
-  "chromosome",
-  "start",
-  "end",
-  "peak_name",
-  "score",
-  "strand"
-)
-atac_peaks_gr <- GRanges(
-  seqnames = atac_peaks$chromosome,
-  ranges = IRanges(atac_peaks$start, atac_peaks$end),
-  peak_name = atac_peaks$peak_name,
-  score = atac_peaks$score
-)
-
-anno_atac_overlaps <- findOverlaps(anno_actino, atac_peaks_gr)
-cne_atac_annotated <- anno_actino[queryHits(anno_atac_overlaps)]
-cne_atac_annotated <- cne_atac_annotated[
-  !(str_detect(cne_atac_annotated$annotation, "Exon"))
-]
+cne_atac_annotated <- subsetByOverlaps(anno_actino, atac_peaks_gr)
 cne_atac_annotated_df <- as.data.frame(cne_atac_annotated)
 
 write.table(
@@ -183,7 +249,7 @@ write.table(
   row.names = FALSE
 )
 write.table(
-  filter(cne_atac_annotated_df, is_active == TRUE),
+  filter(cne_atac_annotated_df, is_active),
   "../output/actinopteriigy_cne_atac_overlaps_active_genes.tsv",
   sep = "\t",
   quote = FALSE,
@@ -238,7 +304,7 @@ write.table(
   filter(
     cne_atac_annotated_df,
     geneId %in% filtered_genes_fin,
-    is_active == TRUE
+    is_active
   ),
   "../output/actinopteriigy_cne_atac_overlaps_fin_specific_active_genes.tsv",
   sep = "\t",
@@ -247,15 +313,15 @@ write.table(
 )
 
 ### --- actinopteriigy-unique CNEs ∩ ATAC -----------------------------------
-ov_tel_verte <- findOverlaps(actinopteriigy_cne_gr, gnathostomata_cne_gr)
-actinopteriigy_only_gr <- actinopteriigy_cne_gr[setdiff(
-  seq_along(actinopteriigy_cne_gr),
-  unique(queryHits(ov_tel_verte))
-)]
-ov_tel_atac <- findOverlaps(actinopteriigy_only_gr, atac_peaks_gr)
-tel_only_with_atac <- actinopteriigy_only_gr[unique(queryHits(ov_tel_atac))]
-ov_anno_telonly <- findOverlaps(anno_actino, tel_only_with_atac)
-final_df_tel <- as.data.frame(anno_actino[unique(queryHits(ov_anno_telonly))])
+actinopteriigy_only_gr <- subsetByOverlaps(
+  actinopteriigy_cne_gr,
+  gnathostomata_cne_gr,
+  invert = TRUE
+)
+tel_only_with_atac <- subsetByOverlaps(actinopteriigy_only_gr, atac_peaks_gr)
+final_df_tel <- as.data.frame(
+  subsetByOverlaps(anno_actino, tel_only_with_atac)
+)
 
 write.table(
   final_df_tel,
@@ -265,7 +331,7 @@ write.table(
   row.names = FALSE
 )
 write.table(
-  filter(final_df_tel, is_active == TRUE),
+  filter(final_df_tel, is_active),
   "../output/actinopteriigy_unique_cne_with_atac_annotated_active_genes.tsv",
   sep = "\t",
   quote = FALSE,
@@ -293,51 +359,30 @@ saveRDS(
 )
 
 ### --- UpSet sets ----------------------------------------------------------
-en <- read_tsv("../ancilliary_files/enhancer.grcz12.bed", col_names = FALSE)
-enh_gr <- GRanges(
-  seqnames = en$X1,
-  ranges = IRanges(en$X2 + 1, en$X3),
-  ep_id = en$X4
-)
+# The Chan enhancer and YueSong CNE sets are passed through so they appear as
+# membership columns in the UpSet matrix; without them the plot only contained
+# the ATAC and activity sets.
 
-yuesong_gr <- GRanges(
-  seqnames = str_remove_all(actinopteriigy_cne_ov$chromosome, "\\.1$"),
-  ranges = IRanges(
-    start = actinopteriigy_cne_ov$start,
-    end = actinopteriigy_cne_ov$end
-  )
-)
-
-base_gr <- unique(anno_actino)
-
-SLACK <- 0L # adjust as needed — 0 for exact, 50-200 for lifted coords
-
-in_atac <- overlapping_idx(base_gr, atac_peaks_gr, slack = SLACK)
-in_active <- overlapping_idx(base_gr, base_gr[base_gr$is_active], 0)
-in_fin <- which(base_gr$geneId %in% filtered_genes_fin)
-in_sheet7 <- overlapping_idx(
-  base_gr,
-  yuesong_gr,
-  slack = SLACK
-)
-in_chan_enh <- overlapping_idx(base_gr, enh_gr, slack = SLACK)
+SLACK <- 0L # 0 for native coordinates, 50-200 bp for lifted-over sets
 
 res_actino <- analyse_cne_universe(
   anno_gr = unique(anno_actino),
   label = "actinopteriigy",
   atac_peaks_gr = atac_peaks_gr,
+  enh_gr = enh_gr,
+  yuesong_gr = yuesong_gr,
   fin_geneIds = filtered_genes_fin,
-  slack = 0L
+  slack = SLACK
 )
 
 res_gnatho <- analyse_cne_universe(
   anno_gr = unique(anno_gnatho),
   label = "gnathostomata",
   atac_peaks_gr = atac_peaks_gr,
+  enh_gr = enh_gr,
   fin_geneIds = filtered_genes_fin,
-  slack = 0L
+  slack = SLACK
 )
-
 
 ### --- Final tables for the Shiny app --------------------------------------
 

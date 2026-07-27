@@ -1,0 +1,15 @@
+annotation_class	n	set	percent
+Exon	6612	actinopteriigy_CNE	76.8
+Promoter	970	actinopteriigy_CNE	11.3
+Intron	405	actinopteriigy_CNE	4.7
+5' UTR	230	actinopteriigy_CNE	2.7
+3' UTR	225	actinopteriigy_CNE	2.6
+Distal Intergenic	167	actinopteriigy_CNE	1.9
+Downstream	5	actinopteriigy_CNE	0.1
+Exon	16681	gnathostomata_CNE	70.9
+Promoter	2604	gnathostomata_CNE	11.1
+Intron	2064	gnathostomata_CNE	8.8
+Distal Intergenic	920	gnathostomata_CNE	3.9
+3' UTR	743	gnathostomata_CNE	3.2
+5' UTR	525	gnathostomata_CNE	2.2
+Downstream	7	gnathostomata_CNE	0

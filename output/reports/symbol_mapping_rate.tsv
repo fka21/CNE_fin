@@ -1,0 +1,7 @@
+metric	n	percent
+Genes in custom annotation	49579	100
+Matched to org.Dr.eg.db SYMBOL	40789	82.3
+Unmatched (dropped)	8790	17.7
+Regulatory domains built	49584	NA
+GO gene-set members	15539	100
+GO members with a regulatory domain	15307	98.5
