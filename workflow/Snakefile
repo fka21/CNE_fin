@@ -1,0 +1,450 @@
+import os
+import glob
+
+configfile: "config/config.yml"
+
+SPECIES     = config["species"]
+CORES       = config["cores"]
+
+wildcard_constraints:
+    chromosome = r"[^/]+(?<!concat)",
+    clade      = r"gnathostomata|gnathostomata_hsap|actinopterygii|sarcopterygii"
+
+CLADES = {
+    "gnathostomata": {
+        "target_genomes": config["target_genomes_gnathostomata"],
+        "tree":           config["tree_gnathostomata"],
+        "subtree":        config["subtree_gnathostomata"],
+        "ref_genome":     config["ref_genome_gnathostomata"],
+        "features_file":  config["features_file_gnathostomata"],
+    },
+    "actinopterygii": {
+        "target_genomes": config["target_genomes_actinopterygii"],
+        "tree":           config["tree_actinopterygii"],
+        "subtree":        config["subtree_actinopterygii"],
+        "ref_genome":     config["ref_genome_actinopterygii"],
+        "features_file":  config["features_file_actinopterygii"],
+    },
+    "sarcopterygii": {
+        "target_genomes": config["target_genomes_sarcopterygii"],
+        "tree":           config["tree_sarcopterygii"],
+        "subtree":        config["subtree_sarcopterygii"],
+        "ref_genome":     config["ref_genome_sarcopterygii"],
+        "features_file":  config["features_file_sarcopterygii"],
+    },
+    "gnathostomata_hsap": {
+        "target_genomes": config["target_genomes_gnathostomata_hsap"],
+        "tree":           config["tree_gnathostomata_hsap"],
+        "subtree":        config["subtree_gnathostomata_hsap"],
+        "ref_genome":     config["ref_genome_gnathostomata_hsap"],
+        "features_file":  config["features_file_gnathostomata_hsap"],
+    },
+}
+
+def get_chromosomes():
+    maf_dir = f"{config['output_dir']}/split_maf/gnathostomata"
+    if os.path.exists(maf_dir):
+        return [os.path.splitext(f)[0] for f in os.listdir(maf_dir)
+                if f.endswith('.maf')]
+    return []
+
+def get_clade_chromosomes(wildcards):
+    checkpoints.split_maf_clade.get(clade=wildcards.clade)
+    maf_dir = f"{config['output_dir']}/split_maf/{wildcards.clade}"
+    return [os.path.splitext(f)[0] for f in os.listdir(maf_dir)
+            if f.endswith('.maf')]
+
+# -----------------------------------------------------------------------
+rule all:
+    input:
+        f"{config['output_dir']}/alignment.hal",
+        expand(
+            f"{config['output_dir']}/{{clade}}/ref.maf",
+            clade=CLADES.keys()
+        ),
+        expand(
+            f"{config['output_dir']}/{{clade}}/concat_most-cons.bed",
+            clade=CLADES.keys()
+        ),
+        # Classified CNE sets
+        f"{config['output_dir']}/classified/gnathostomata_conserved_drer.bed",
+        f"{config['output_dir']}/classified/gnathostomata_conserved_hsap.bed",
+        f"{config['output_dir']}/classified/actinopterygii_specific_drer.bed",
+        f"{config['output_dir']}/classified/sarcopterygii_specific_hsap.bed",
+        # CSV outputs (phastCons score only)
+        f"{config['output_dir']}/csv/gnathostomata_conserved_drer.csv",
+        f"{config['output_dir']}/csv/gnathostomata_conserved_hsap.csv",
+        f"{config['output_dir']}/csv/actinopterygii_specific_drer.csv",
+        f"{config['output_dir']}/csv/sarcopterygii_specific_hsap.csv",
+
+# -----------------------------------------------------------------------
+# Step 0: Cactus alignment
+rule cactus_alignment:
+    input:
+        config_file = "config/cactus.config",
+        genomes = expand(
+            "{genome_dir}/{species}.fa",
+            genome_dir=config["genome_dir"],
+            species=SPECIES
+        )
+    output:
+        hal_file = f"{config['output_dir']}/alignment.hal"
+    params:
+        jobstore = f"{config['output_dir']}/jobsStore"
+    container:
+        "docker://quay.io/comparative-genomics-toolkit/cactus:v2.9.9"
+    log: "logs/cactus_alignment.log"
+    threads: CORES
+    shell:
+        """
+        cactus {params.jobstore} --logFile {log} {input.config_file} {output.hal_file}
+        """
+
+# -----------------------------------------------------------------------
+# Step 1a: hal2maf — per-clade reference genome
+rule hal2maf_clade:
+    input:
+        hal_file = f"{config['output_dir']}/alignment.hal"
+    output:
+        maf_file = f"{config['output_dir']}/{{clade}}/ref.maf"
+    params:
+        ref_genome     = lambda wc: CLADES[wc.clade]["ref_genome"],
+        target_genomes = lambda wc: CLADES[wc.clade]["target_genomes"],
+        jobstore       = lambda wc: f"{config['output_dir']}/{wc.clade}/js_hal2maf",
+        chunk_size     = config["cactus"]["chunk_size"],
+        dupe_mode      = config["cactus"]["dupe_mode"]
+    threads: CORES
+    container:
+        "docker://quay.io/comparative-genomics-toolkit/cactus:v2.9.9"
+    log:
+        f"logs/hal2maf_{{clade}}.log"
+    shell:
+        """
+        cactus-hal2maf {params.jobstore} {input.hal_file} {output.maf_file} \
+          --maxCores {threads} --noAncestors --filterGapCausingDupes \
+          --refGenome {params.ref_genome} \
+          --targetGenomes {params.target_genomes} \
+          --dupeMode {params.dupe_mode} \
+          --chunkSize {params.chunk_size} \
+          --logFile {log} --coverage
+        """
+
+# Step 1b: Remove duplicates
+rule deduplicate_maf_clade:
+    input:
+        maf_file  = f"{config['output_dir']}/{{clade}}/ref.maf"
+    output:
+        dedup_maf = f"{config['output_dir']}/{{clade}}/ref.dedup.maf"
+    container:
+        "docker://quay.io/comparative-genomics-toolkit/cactus:v2.9.9"
+    shell:
+        """
+        mafDuplicateFilter -k -m {input.maf_file} > {output.dedup_maf}
+        """
+
+# Step 1c: Sort
+rule sort_maf_clade:
+    input:
+        dedup_maf  = f"{config['output_dir']}/{{clade}}/ref.dedup.maf"
+    output:
+        sorted_maf = f"{config['output_dir']}/{{clade}}/ref.dedup.sorted.maf"
+    params:
+        ref_genome = lambda wc: CLADES[wc.clade]["ref_genome"]
+    conda: "workflow/envs/maf_manipulation.yml"
+    shell:
+        """
+        maf_sort {input.dedup_maf} {params.ref_genome} > {output.sorted_maf}
+        """
+
+# Step 1d: Split by chromosome — CHECKPOINT
+checkpoint split_maf_clade:
+    input:
+        sorted_maf = f"{config['output_dir']}/{{clade}}/ref.dedup.sorted.maf"
+    output:
+        directory(f"{config['output_dir']}/split_maf/{{clade}}")
+    conda: "workflow/envs/maf_manipulation.yml"
+    shell:
+        """
+        mkdir -p {output}
+        mafSplit -byTarget -useFullSequenceName placeholder.bed \
+          {output}/ {input.sorted_maf}
+        """
+
+# -----------------------------------------------------------------------
+# Step 2a: Filter
+rule filter_maf_clade:
+    input:
+        f"{config['output_dir']}/split_maf/{{clade}}/{{chromosome}}.maf"
+    output:
+        f"{config['output_dir']}/{{clade}}/filtered_maf/{{chromosome}}_filtered.maf"
+    container:
+        "docker://quay.io/comparative-genomics-toolkit/cactus:v2.9.9"
+    shell:
+        """
+        mafFilter -l 3 --maf {input} > {output}
+        """
+
+# Step 2b: Sort filtered MAF
+rule sort_filtered_maf_clade:
+    input:
+        f"{config['output_dir']}/{{clade}}/filtered_maf/{{chromosome}}_filtered.maf"
+    output:
+        f"{config['output_dir']}/{{clade}}/filtered_sorted_maf/{{chromosome}}_filtered_sorted.maf"
+    params:
+        ref_genome = lambda wc: CLADES[wc.clade]["ref_genome"]
+    conda: "workflow/envs/maf_manipulation.yml"
+    shell:
+        """
+        maf_sort {input} {params.ref_genome} > {output}
+        """
+
+# Step 2c: Extract features — per clade
+rule extract_features:
+    input:
+        features_file = lambda wc: CLADES[wc.clade]["features_file"]
+    output:
+        f"{config['output_dir']}/features/{{clade}}/{{chromosome}}_features.gff"
+    params:
+        ref_genome = lambda wc: CLADES[wc.clade]["ref_genome"]
+    shell:
+        """
+        grep -P "^{wildcards.chromosome}\t" {input.features_file} | \
+          awk -v ref="{params.ref_genome}" \
+            'BEGIN{{OFS="\\t"}} {{ $1=ref"."$1; print }}' > {output}
+        sed -i 's/Genomic\tpseudogene/Genomic-pseudogene/g' {output}
+        sed -i 's/Genomic\texon/Genomic-exon/g' {output}
+        """
+
+# -----------------------------------------------------------------------
+# Step 3a: Extract 4D sites
+rule extract_4d_sites_clade:
+    input:
+        maf_file = f"{config['output_dir']}/{{clade}}/filtered_sorted_maf/{{chromosome}}_filtered_sorted.maf",
+        features = f"{config['output_dir']}/features/{{clade}}/{{chromosome}}_features.gff"
+    output:
+        ss_4d       = f"{config['output_dir']}/{{clade}}/4d/{{chromosome}}_4d.ss",
+        ss_4d_sites = f"{config['output_dir']}/{{clade}}/4d_sites/{{chromosome}}_4d_sites.ss"
+    conda: "workflow/envs/maf_manipulation.yml"
+    shell:
+        r"""
+        if grep -q "{wildcards.chromosome}" {input.maf_file}; then
+            msa_view {input.maf_file} --in-format MAF --4d \
+              --features {input.features} > {output.ss_4d} 2>/dev/null || true
+            if [ -s {output.ss_4d} ] && [ "$(wc -l < {output.ss_4d})" -gt 1 ]; then
+                msa_view {output.ss_4d} --in-format SS --out-format SS \
+                  --tuple-size 1 > {output.ss_4d_sites} 2>/dev/null || true
+            fi
+            [ -s {output.ss_4d} ]       || touch {output.ss_4d}
+            [ -s {output.ss_4d_sites} ] || touch {output.ss_4d_sites}
+        else
+            touch {output.ss_4d} {output.ss_4d_sites}
+        fi
+        """
+
+# Step 3b: Aggregate 4D sites
+rule aggregate_4d_sites_clade:
+    input:
+        lambda wc: expand(
+            f"{config['output_dir']}/{wc.clade}/4d_sites/{{chromosome}}_4d_sites.ss",
+            chromosome=get_clade_chromosomes(wc)
+        )
+    output:
+        f"{config['output_dir']}/{{clade}}/aggregated_4d_sites.ss"
+    params:
+        species_list = lambda wc: CLADES[wc.clade]["target_genomes"]
+    conda: "workflow/envs/maf_manipulation.yml"
+    shell:
+        """
+        find {config[output_dir]}/{wildcards.clade}/4d_sites/ -empty -delete
+        msa_view --unordered-ss --in-format SS --out-format SS \
+          --aggregate {params.species_list} \
+          {config[output_dir]}/{wildcards.clade}/4d_sites/*_4d_sites.ss > {output}
+        """
+
+# Step 3c: Genome-wide neutral model
+rule generate_background_model_clade:
+    input:
+        aggregated_4d = f"{config['output_dir']}/{{clade}}/aggregated_4d_sites.ss"
+    output:
+        f"{config['output_dir']}/{{clade}}/general.mod"
+    params:
+        tree     = lambda wc: CLADES[wc.clade]["tree"],
+        out_root = lambda wc: f"{config['output_dir']}/{wc.clade}/general"
+    container:
+        "docker://quay.io/comparative-genomics-toolkit/cactus:v2.9.9"
+    shell:
+        """
+        phyloFit --tree "{params.tree}" --subst-mod REV \
+          --out-root {params.out_root} --msa-format SS {input.aggregated_4d}
+        """
+
+# Step 3d: Per-chromosome neutral model
+rule phylofit_chromosome_clade:
+    input:
+        maf_file    = f"{config['output_dir']}/split_maf/{{clade}}/{{chromosome}}.maf",
+        features    = lambda wc: CLADES[wc.clade]["features_file"],
+        general_mod = f"{config['output_dir']}/{{clade}}/general.mod"
+    output:
+        mod_file = f"{config['output_dir']}/{{clade}}/{{chromosome}}.background.mod"
+    params:
+        tree     = lambda wc: CLADES[wc.clade]["tree"],
+        out_root = lambda wc: f"{config['output_dir']}/{wc.clade}/{wc.chromosome}"
+    container:
+        "docker://quay.io/comparative-genomics-toolkit/cactus:v2.9.9"
+    shell:
+        """
+        if phyloFit --tree "{params.tree}" --subst-mod HKY85 \
+             --features {input.features} --catmap "NCATS = 0" \
+             --out-root {params.out_root} {input.maf_file} 2>/dev/null \
+           && [ -f {output.mod_file} ]; then
+            echo "phyloFit succeeded for {wildcards.chromosome}"
+        else
+            echo "phyloFit produced no output for {wildcards.chromosome} — using general.mod fallback"
+            cp {input.general_mod} {output.mod_file}
+        fi
+        """
+
+# -----------------------------------------------------------------------
+# Step 4a: phastCons
+rule phastcons_clade:
+    input:
+        maf_file = f"{config['output_dir']}/split_maf/{{clade}}/{{chromosome}}.maf",
+        mod_file = f"{config['output_dir']}/{{clade}}/{{chromosome}}.background.mod"
+    output:
+        bed_file = f"{config['output_dir']}/{{clade}}/{{chromosome}}_most-cons.bed",
+        wig_file = f"{config['output_dir']}/{{clade}}/{{chromosome}}_scores.wig"
+    container:
+        "docker://quay.io/comparative-genomics-toolkit/cactus:v2.9.9"
+    shell:
+        """
+        phastCons --target-coverage 0.25 --expected-length 50 --rho 0.4 \
+          --most-conserved {output.bed_file} --score --msa-format MAF \
+          {input.maf_file} {input.mod_file} > {output.wig_file}
+        """
+
+# Step 4b: Concatenate per-chromosome BEDs
+rule concatenate_results_clade:
+    input:
+        lambda wc: expand(
+            f"{config['output_dir']}/{wc.clade}/{{chromosome}}_most-cons.bed",
+            chromosome=get_clade_chromosomes(wc)
+        )
+    output:
+        f"{config['output_dir']}/{{clade}}/concat_most-cons.bed"
+    shell:
+        """
+        cat {input} | sort -k1,1 -k2,2n > {output}
+        """
+
+# -----------------------------------------------------------------------
+# Step 5: Classify CNEs
+#
+# All bedtools intersect -v (NOT subtract) so that any element with even
+# a 1 bp overlap to the exclusion set is fully removed. bedtools subtract
+# would trim partial overlaps and retain the remainder, inflating counts.
+#
+# gnathostomata_conserved_drer (drer):
+#   gnathostomata elements with NO overlap in actinopterygii
+#   = broadly ancestral elements not specific to fish lineage
+#
+# actinopterygii_specific_drer (drer):
+#   actinopterygii elements with NO overlap in gnathostomata
+#   = fish-specific elements not present in the broad ancestral set
+#
+# gnathostomata_conserved_hsap (hsap):
+#   gnathostomata_hsap elements with NO overlap in sarcopterygii
+#   = broadly ancestral elements not specific to tetrapod lineage
+#
+# sarcopterygii_specific_hsap (hsap):
+#   sarcopterygii elements with NO overlap in gnathostomata_hsap
+#   = tetrapod-specific elements absent from the broad ancestral set
+# -----------------------------------------------------------------------
+rule classify_cnes:
+    input:
+        gnathostomata_drer  = f"{config['output_dir']}/gnathostomata/concat_most-cons.bed",
+        actinopterygii_drer = f"{config['output_dir']}/actinopterygii/concat_most-cons.bed",
+        gnathostomata_hsap  = f"{config['output_dir']}/gnathostomata_hsap/concat_most-cons.bed",
+        sarcopterygii_hsap  = f"{config['output_dir']}/sarcopterygii/concat_most-cons.bed"
+    output:
+        gnathostomata_conserved_drer = f"{config['output_dir']}/classified/gnathostomata_conserved_drer.bed",
+        actinopterygii_specific_drer = f"{config['output_dir']}/classified/actinopterygii_specific_drer.bed",
+        gnathostomata_conserved_hsap = f"{config['output_dir']}/classified/gnathostomata_conserved_hsap.bed",
+        sarcopterygii_specific_hsap  = f"{config['output_dir']}/classified/sarcopterygii_specific_hsap.bed"
+    conda: "workflow/envs/bedtools.yml"
+    shell:
+        """
+        mkdir -p {config[output_dir]}/classified
+
+        # ── drer coordinate space ──────────────────────────────────────────
+
+        # Gnathostomata-conserved: ancestral elements NOT specific to fish
+        bedtools intersect -v \
+          -a {input.gnathostomata_drer} \
+          -b {input.actinopterygii_drer} \
+          > {output.gnathostomata_conserved_drer}
+
+        # Actinopterygii-specific: fish elements with NO overlap in gnathostomata
+        bedtools intersect -v \
+          -a {input.actinopterygii_drer} \
+          -b {input.gnathostomata_drer} \
+          > {output.actinopterygii_specific_drer}
+
+        # ── hsap coordinate space ──────────────────────────────────────────
+
+        # Gnathostomata-conserved (hsap): ancestral elements NOT specific to tetrapods
+        bedtools intersect -v \
+          -a {input.gnathostomata_hsap} \
+          -b {input.sarcopterygii_hsap} \
+          > {output.gnathostomata_conserved_hsap}
+
+        # Sarcopterygii-specific: tetrapod elements with NO overlap in gnathostomata
+        bedtools intersect -v \
+          -a {input.sarcopterygii_hsap} \
+          -b {input.gnathostomata_hsap} \
+          > {output.sarcopterygii_specific_hsap}
+        """
+
+# -----------------------------------------------------------------------
+# Step 6: Export CSVs — phastCons score only
+#
+# CSV columns: chrom, start, end, name, phastcons_score, length,
+#              cne_type, reference_genome
+# -----------------------------------------------------------------------
+rule export_cne_csvs:
+    input:
+        gnatho_drer = f"{config['output_dir']}/classified/gnathostomata_conserved_drer.bed",
+        gnatho_hsap = f"{config['output_dir']}/classified/gnathostomata_conserved_hsap.bed",
+        actino_drer = f"{config['output_dir']}/classified/actinopterygii_specific_drer.bed",
+        sarco_hsap  = f"{config['output_dir']}/classified/sarcopterygii_specific_hsap.bed"
+    output:
+        gnatho_drer = f"{config['output_dir']}/csv/gnathostomata_conserved_drer.csv",
+        gnatho_hsap = f"{config['output_dir']}/csv/gnathostomata_conserved_hsap.csv",
+        actino_drer = f"{config['output_dir']}/csv/actinopterygii_specific_drer.csv",
+        sarco_hsap  = f"{config['output_dir']}/csv/sarcopterygii_specific_hsap.csv"
+    conda: "workflow/envs/bedtools.yml"
+    shell:
+        """
+        mkdir -p {config[output_dir]}/csv
+
+        bed_to_csv() {{
+            local inbed=$1
+            local outcsv=$2
+            local cne_type=$3
+            local ref=$4
+            echo "chrom,start,end,name,phastcons_score,length,cne_type,reference_genome" > "$outcsv"
+            awk -v type="$cne_type" -v ref="$ref" \
+              'BEGIN{{OFS=","}} \
+               NF>=3 {{ \
+                 chrom=$1; start=$2; end=$3; \
+                 name=(NF>=4 ? $4 : "."); \
+                 score=(NF>=5 ? $5 : "."); \
+                 len=end-start; \
+                 print chrom,start,end,name,score,len,type,ref \
+               }}' "$inbed" >> "$outcsv"
+        }}
+
+        bed_to_csv {input.gnatho_drer} {output.gnatho_drer} "gnathostomata_conserved" "drer"
+        bed_to_csv {input.gnatho_hsap} {output.gnatho_hsap} "gnathostomata_conserved" "hsap"
+        bed_to_csv {input.actino_drer} {output.actino_drer} "actinopterygii_specific"  "drer"
+        bed_to_csv {input.sarco_hsap}  {output.sarco_hsap}  "sarcopterygii_specific"   "hsap"
+        """

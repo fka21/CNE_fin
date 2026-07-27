@@ -1,67 +1,108 @@
 # CNE_fin
 
-Summary
--------
-This repository contains analyses and results for comparative non-coding element (CNE) discovery and motif enrichment. It includes input data (genome and annotation fragments, peak sets, PWM files), analysis scripts (R and shell), and generated outputs (tables, motif analysis results and a Shiny app for exploration).
+Comparative analysis of conserved non-coding elements (CNEs) across vertebrates, identifying lineage-specific regulatory elements and their associations with gene function and chromatin accessibility in *Danio rerio*.
 
-Definitions: Teleost vs Vertebrate CNEs
--------------------------------------
-- Teleost CNEs: CNEs which are found in teleost species but not in tetrapods (teleost-specific).
-- Vertebrate CNEs: CNEs which are shared by teleost species and also tetrapod species (conserved across vertebrates).
+## Definitions
 
-Repository layout
------------------
-- [input](input): original and processed input files (BED/TSV/FASTA/PWM).
-- [ancilliary_files](ancilliary_files): large reference genomes, chains and indexes (kept out of git by default).
-- [output](output): generated results, tables and MEME/AME outputs.
-- [scripts](scripts): R scripts and shell wrappers used to run analyses.
-- [shiny_app](shiny_app): small Shiny app and Docker container files to explore results.
+- **Actinopterygii-specific CNEs** — conserved in ray-finned fishes but absent in tetrapods; coordinates in GRCz11.
+- **Gnathostomata-conserved CNEs** — conserved across jawed vertebrates; coordinates in GRCz11 (zebrafish reference) and GRCh38 (human reference).
+- **Sarcopterygii-specific CNEs** — conserved in lobe-finned vertebrates but absent in the broader gnathostome set; coordinates in GRCh38.
 
-Key files
----------
-- [scripts/cne_analysis.R](scripts/cne_analysis.R) — main analysis driver R script.
-- [scripts/custom_functions.R](scripts/custom_functions.R) — helper functions used by analysis scripts.
-- [shiny_app/app.R](shiny_app/app.R) — Shiny app for result exploration.
+## Repository layout
 
-List of outputs
--------------------------
+```
+input/                        CNE BED files, ATAC peaks, RNA-seq TPM, external datasets
+ancilliary_files/             Reference annotation (GFF, chrom sizes, sequence reports)
+workflow/
+  Snakefile                   End-to-end CNE discovery pipeline (Cactus → phastCons → classify)
+  config/
+    config.yml                Species, tree strings, paths, phastCons parameters
+    cactus.config             Progressive Cactus alignment config
+  envs/
+    maf_manipulation.yml      Conda env: maf_sort, msa_view, phyloFit
+    bedtools.yml              Conda env: bedtools
+scripts/
+  custom_functions.R          Shared helper functions (sourced by all R scripts)
+  01_cne_preprocess.R         CNE import, ChIPseeker annotation, gene activity
+  02_go_enrichment.R          rGREAT GO enrichment, hotspot scoring, TSS diagnostics
+  03_post_process.R           Filtered exports, UpSet plots, ATAC overlaps
+  04_visualizations.R         Circos plots, Gviz locus views, CNE width distributions
+  figure_generators/
+    Kagan2026-Figure_2.R      CNE set comparison (counts, widths, hotspots)
+    Kagan2026-Figure_3.R      GO enrichment network panels
+    Kagan2026-Figure_4.R      TF motif enrichment volcano panels
+    Kagan2026-Supplementary_Figure_1.R   pcdh cluster locus views
+    Kagan2026-Supplementary_Figure_5.R   CNE abundance vs gene structure
+    Kagan2026-Supplementary_Figure_6.R   Top-N hotspot summary with GO annotation
+    Kagan2026-Supplementary_Figures_7_8.R  GO sub-tree panels by biological process
+  tf_enrichment/              Shell/Python scripts for AME motif enrichment
+output/                       Generated figures and tables (see below)
+```
+
+## Reproducing the analysis
+
+### Step 1 — CNE discovery (Snakemake)
+
+Run from the repository root. Requires Singularity/Apptainer for the Cactus container and Conda for the MAF and bedtools environments.
+
+```bash
+snakemake --cores <N> --use-conda --use-singularity
+```
+
+Outputs four classified BED files under `classified/` that feed into Step 2.
+
+### Step 2 — R analysis pipeline
+
+Run in order from the `scripts/` directory.
+
+```bash
+Rscript 01_cne_preprocess.R
+Rscript 02_go_enrichment.R
+Rscript 03_post_process.R
+Rscript 04_visualizations.R
+```
+
+The sarcopterygii / human-reference panels require three additional files in `ancilliary_files/` and `input/`; after running `01` check `output/reports/` for a summary of what was found.
+
+### Step 3 — Figure scripts
+
+Each script in `scripts/figure_generators/` is self-contained and reads from `output/`. Run from that directory or set paths at the top of each file.
+
+```bash
+cd output
+Rscript ../scripts/figure_generators/Kagan2026-Figure_2.R
+# etc.
+```
+
+TF enrichment scripts in `scripts/tf_enrichment/` are run independently; see the README in that subdirectory.
+
+## Key outputs
+
 ```
 output/
-├─ cne_atac_overlaps_by_annotation.png                  # counts of CNE–ATAC overlaps by genomic annotation (promoter/enhancer/etc.).
-├─ cne_atac_overlaps_fin_specific_by_annotation.png     # same plot restricted to fin-specific CNEs.
-├─ cne_atac_overlaps.tsv                                # table listing overlaps between CNEs and ATAC peaks with annotation fields.
-├─ cne_widths.png                                       # distribution plot of CNE lengths.
-├─ comb_heatmap.pdf                                     # heatmap of ATAC-seq signal in Teleost and Vertebrata CNEs.
-├─ comb_profile.pdf                                     # averaged ATAC-seq profile across Teleost and Vertebrata CNEs.
-├─ GO_enrichment_results.csv                            # GO enrichment results for CNE-associated gene sets (CSV).
-├─ GO_enrichment_results.tsv                            # GO enrichment results (TSV).
-├─ GO-filtered_cne_annotations.pdf                      # PDF summarizing GO-filtered annotations for candidate CNE genes.
-├─ teleost_cne_atac_overlaps_annotated.tsv              # annotated overlaps for teleost CNEs and ATAC peaks.
-├─ teleost_cne_enrichment_dotplot.pdf                   # dotplot of enrichment statistics for teleost CNE-associated terms.
-├─ teleost_GO-fin_specific_cne.csv                      # GO enrichment (CSV) for fin-specific teleost CNE-associated genes.
-├─ teleost_GO-fin_specific_cne.tsv                      # GO enrichment (TSV) for fin-specific teleost CNE-associated genes.
-├─ teleost_GO-fin-skeletal_specific_cne.csv             # GO enrichment (CSV) for skeletal-specific teleost CNE-associated genes.
-├─ teleost_GO-fin-skeletal_specific_cne.tsv             # GO enrichment (TSV) for skeletal-specific teleost CNE-associated genes.
-├─ teleost_hits_with_atac_annotated.tsv                 # teleost CNEs overlapping ATAC peaks with gene and peak metadata.
-├─ teleost_specific_cne.csv                             # list of teleost-specific CNEs (CSV).
-├─ teleost_specific_cne.tsv                             # list of teleost-specific CNEs (TSV).
-├─ teleost_unique_cne_with_atac_annotated_active_genes.tsv  # teleost-unique CNEs annotated with active gene assignments.
-├─ teleost_unique_cne_with_atac_annotated.tsv           # teleost-unique CNEs with ATAC overlap annotations.
-├─ upset_overlaps.pdf                                   # UpSet plot summarizing overlaps between different CNE and peak sets.
-└─ meme_analysis/
-  ├─ teleostei_motifs/
-  │  ├─ teleostei_cne.fa                                # FASTA of teleost CNE sequences used for motif discovery/enrichment.
-  │  └─ ame_output/
-  │     ├─ ame.html                                     # AME HTML report summarizing motif enrichment for teleost CNEs.
-  │     ├─ ame.tsv                                      # Tabular AME results.
-  │     └─ sequences.tsv                                # derived sequence output (large; excluded from repo by default).
-  └─ vertebrata_motifs/
-    ├─ vertebrata_cne.fa                                # FASTA of vertebrate-shared CNE sequences used for motif analyses.
-    └─ ame_output/
-      ├─ ame.html                                       # AME HTML report summarizing motif enrichment for vertebrate CNEs.
-      ├─ ame.tsv                                        # Tabular AME results.
-      └─ sequences.tsv                                  # derived sequence output (large; excluded from repo by default).
+├── preprocessed/                          Serialised R objects shared between analysis scripts
+├── great/
+│   ├── great_*_GObp*.tsv                  rGREAT GO:BP enrichment (whole-genome and CNE-union backgrounds)
+│   ├── great_strict_dualtest*.tsv         Dual-test (binomial + hypergeometric) significant terms
+│   ├── cne_hotspots_domain_normalised.tsv Per-gene CNE density normalised to regulatory domain length
+│   └── shared_fc_GO_great.tsv             Fold-enrichment comparison across CNE sets
+├── reports/
+│   ├── symbol_mapping_rate.tsv            SYMBOL match rate between GFF annotation and org.Dr.eg.db
+│   ├── tss_distance_summary.tsv           Signed TSS-distance summary (rGREAT region–gene associations)
+│   ├── annotation_composition*.tsv        ChIPseeker annotation class breakdown
+│   └── hotspot_rank_raw_vs_normalised.tsv Effect of domain-length normalisation on hotspot ranking
+├── circos_element_density.pdf             CNE density, zebrafish chromosomes (GRCz11)
+├── circos_element_density_hsap.pdf        CNE density, human chromosomes (GRCh38)
+├── cne_hotspots_domain_normalised.pdf     Hotspot loci ranked by obs/expected per regulatory domain
+├── cne_annotations.pdf                    ChIPseeker annotation bar chart
+├── power_law_like_fits*.pdf               CNE width distributions
+├── upset_overlaps_*.pdf                   UpSet plots (ATAC, active genes, Chan enhancers, YueSong CNEs)
+├── gviz_GO0007224/                        Gviz locus panels for smoothened-signalling genes
+└── meme_analysis/                         AME motif enrichment results
 ```
 
-> **Note**
->The files above are the generated outputs present in `output/`. Most are small analysis result tables and figures and are intended to be tracked in the repository. Large derived sequence tables under `output/meme_analysis/*/ame_output/sequences.tsv` remain excluded by default.
+## Dependencies
+
+**Workflow:** Cactus v2.9.9 (container), maf_sort, msa_view, phyloFit (PHAST), bedtools.
+
+**R packages:** `GenomicRanges`, `GenomicFeatures`, `rtracklayer`, `ChIPseeker`, `rGREAT` (≥ 2.0), `org.Dr.eg.db`, `simplifyEnrichment`, `ComplexHeatmap`, `circlize`, `CNEr`, `Gviz`, `zFPKM`, `SummarizedExperiment`, `GO.db`, `igraph`, `ggraph`, `tidygraph`, `tidyverse`, `tidyplots`, `readxl`, `poweRlaw`, `patchwork`, `ggrepel`, `ggpubr`.

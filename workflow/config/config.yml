@@ -1,0 +1,67 @@
+# -----------------------------------------------------------------------
+# Input/Output
+# -----------------------------------------------------------------------
+genome_dir: "workflow/resources/genomes"
+output_dir: "results"
+
+# Per-clade reference genomes
+# gnathostomata + actinopterygii: drer (shared coordinate space for classification)
+# sarcopterygii: hsap (tetrapod reference; BED is lifted to drer before bedtools)
+ref_genome_gnathostomata: "drer"
+ref_genome_actinopterygii: "drer"
+ref_genome_sarcopterygii: "hsap"
+
+# Annotation files — per-clade
+features_file_gnathostomata: "workflow/resources/annotations/drer.gff"
+features_file_actinopterygii: "workflow/resources/annotations/drer.gff"
+features_file_sarcopterygii: "workflow/resources/annotations/hsap.gff"
+
+# -----------------------------------------------------------------------
+# Computational resources
+# -----------------------------------------------------------------------
+cores: 30
+
+# -----------------------------------------------------------------------
+# Species — must match abbreviations in cactus.config exactly
+# -----------------------------------------------------------------------
+species: ['drer', 'locu', 'olat', 'scan', 'hsap', 'xtro', 'ggal']
+
+# -----------------------------------------------------------------------
+# Cactus parameters
+# -----------------------------------------------------------------------
+cactus:
+  chunk_size: 10000
+  dupe_mode: "single"
+
+# -----------------------------------------------------------------------
+# Per-clade configuration
+# Trees in subst/site (Mya / ~300)
+# Full topology: (scan,((locu,(olat,drer)),(xtro,(hsap,ggal))))
+# -----------------------------------------------------------------------
+
+# GNATHOSTOMATA: all species — scan polarizes ancestral state, drer = ref
+tree_gnathostomata: "(scan:1.541,((locu:1.071,(olat:0.747,drer:0.747):0.325):0.359,(xtro:1.172,(hsap:1.063,ggal:1.063):0.109):0.258):0.111)"
+target_genomes_gnathostomata: "drer,locu,olat,scan,hsap,xtro,ggal"
+subtree_gnathostomata: "drer"
+
+# ACTINOPTERYGII: gar + teleosts, drer = ref
+tree_actinopterygii: "(locu:1.071,(olat:0.747,drer:0.747):0.325)"
+target_genomes_actinopterygii: "drer,locu,olat"
+subtree_actinopterygii: "drer"
+
+# SARCOPTERYGII: tetrapods + scan as outgroup, hsap = ref
+# drer intentionally excluded — not a sarcopterygian
+# hsap-coord BED is lifted to drer coords for bedtools classification
+# (liftover_sarcopterygii_to_drer rule in Snakefile)
+tree_sarcopterygii: "(scan:1.541,(xtro:1.172,(hsap:1.063,ggal:1.063):0.109):0.258)"
+target_genomes_sarcopterygii: "xtro,hsap,ggal,scan"
+subtree_sarcopterygii: "hsap"
+# GNATHOSTOMATA (hsap reference):
+# Same species as gnathostomata_drer but with hsap as MAF reference and hsap.gff
+# for the neutral model. Used to define gnathostomata_conserved_hsap, which is
+# then subtracted from sarcopterygii to get sarcopterygii_specific_hsap.
+tree_gnathostomata_hsap: "(scan:1.541,((locu:1.071,(olat:0.747,drer:0.747):0.325):0.359,(xtro:1.172,(hsap:1.063,ggal:1.063):0.109):0.258):0.111)"
+target_genomes_gnathostomata_hsap: "drer,locu,olat,scan,hsap,xtro,ggal"
+subtree_gnathostomata_hsap: "hsap"
+ref_genome_gnathostomata_hsap: "hsap"
+features_file_gnathostomata_hsap: "workflow/resources/annotations/hsap.gff"

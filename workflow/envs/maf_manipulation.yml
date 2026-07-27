@@ -1,0 +1,33 @@
+name: maf_manipulation
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - _libgcc_mutex=0.1=conda_forge
+  - _openmp_mutex=4.5=2_gnu
+  - bzip2=1.0.8=h4bc722e_7
+  - ca-certificates=2025.8.3=hbd8a1cb_0
+  - coreutils=9.5=hd590300_0
+  - grep=3.11=h7af0fdc_3
+  - libgcc=15.1.0=h767d61c_4
+  - libgcc-ng=15.1.0=h69a702a_4
+  - libgomp=15.1.0=h767d61c_4
+  - libiconv=1.18=h4ce23a2_1
+  - liblzma=5.8.1=hb9d3cd8_2
+  - libopenssl-static=3.5.1=hb9d3cd8_0
+  - libpng=1.6.50=h421ea60_1
+  - libstdcxx=15.1.0=h8f9b012_4
+  - libstdcxx-ng=15.1.0=h4852527_4
+  - libuuid=2.38.1=h0b41bf4_0
+  - libxcrypt=4.4.36=hd590300_1
+  - libzlib=1.3.1=hb9d3cd8_2
+  - multiz=11.2=h7b50bb2_7
+  - mysql-connector-c=6.1.11=h659d440_1008
+  - openssl=3.5.1=h7b32b05_0
+  - pcre2=10.44=hc749103_2
+  - perl=5.32.1=7_hd590300_perl5
+  - phast=1.5=h7b50bb2_7
+  - rename=1.601=hdfd78af_1
+  - ucsc-mafsplit=482=h0b57e2e_0
+prefix: /home/ferenc.kagan/miniconda3/envs/maf_manipulation
