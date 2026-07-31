@@ -135,7 +135,7 @@ plot_cne_circos(
   tracks = list(
     overlap_list$`Actinopteriigy specific CNE`,
     overlap_list$`Gnathostomata specific CNE`,
-    overlap_list$`Actinopteriigy CNE with\nATACseq peak overlap`
+    gr$atac_peaks_gr
   ),
   chrom_sizes = drer_chrom_sizes,
   filepath = "../output/circos_element_density.pdf",
@@ -147,7 +147,7 @@ plot_cne_circos(
   ),
   bin_size = bin_size,
   label_gap = 1,
-  legend_title = "GRCz11"
+  legend_title = "GRCz12"
 )
 
 ###############################################################################
@@ -185,6 +185,29 @@ hsap_chrom_sizes <- setNames(
   hsap_autosomes
 )
 
+dir.create("../output/reports", showWarnings = FALSE, recursive = TRUE)
+
+# Gene models for the human locus panels. Both packages are optional: without
+# them the CNE density and element tracks are still drawn, only the gene track
+# is dropped. UCSC seqlevels match the relabelled CNE objects.
+hsap_txdb <- if (
+  requireNamespace("TxDb.Hsapiens.UCSC.hg38.knownGene", quietly = TRUE)
+) {
+  TxDb.Hsapiens.UCSC.hg38.knownGene::TxDb.Hsapiens.UCSC.hg38.knownGene
+} else {
+  message(
+    "TxDb.Hsapiens.UCSC.hg38.knownGene not installed; ",
+    "human panels will omit the gene track."
+  )
+  NULL
+}
+
+hsap_orgdb <- if (requireNamespace("org.Hs.eg.db", quietly = TRUE)) {
+  org.Hs.eg.db::org.Hs.eg.db
+} else {
+  NULL
+}
+
 # Same bin width as the zebrafish panel, so counts on the two circos plots are
 # in identical units (CNEs per 2 Mb) and can be compared directly.
 plot_cne_circos(
@@ -221,6 +244,94 @@ plot_cne_width_powerlaw(
 )
 par(mfrow = c(1, 1))
 dev.off()
+
+###########################################################################
+### Gviz — Sarcopterygii-specific density peaks (human coordinates)      ###
+###########################################################################
+# The circos panel shows sarcopterygii-specific elements concentrating on
+# chr1 and chr2 and towards the ends of chr10. Rather than hard-coding those
+# coordinates, the densest 1 Mb window is located in each target interval and
+# the plotting window is centred on it, so the panels track the element set if
+# it is regenerated. Chosen windows are written out so they can be fixed for
+# the final figure once the set is frozen.
+
+hsap_gviz_dir <- "../output/gviz_hsap"
+dir.create(hsap_gviz_dir, showWarnings = FALSE, recursive = TRUE)
+
+chr10_len <- hsap_chrom_sizes[["chr10"]]
+telomere_span <- 10e6
+
+spike_targets <- list(
+  list(label = "chr1", chrom = "chr1", region = NULL),
+  list(label = "chr2", chrom = "chr2", region = NULL),
+  list(
+    label = "chr10_p_telomere",
+    chrom = "chr10",
+    region = c(1, telomere_span)
+  ),
+  list(
+    label = "chr10_q_telomere",
+    chrom = "chr10",
+    region = c(chr10_len - telomere_span, chr10_len)
+  )
+)
+
+spike_windows <- purrr::map_dfr(spike_targets, function(tg) {
+  top <- find_cne_spikes(
+    hsap_cne_gr$sarcopterygii,
+    chrom = tg$chrom,
+    bin_size = 1e6,
+    region = tg$region,
+    n = 3,
+    chrom_length = hsap_chrom_sizes[[tg$chrom]]
+  )
+  if (!nrow(top)) {
+    return(tibble())
+  }
+  top %>%
+    mutate(target = tg$label, rank = row_number()) %>%
+    relocate(target, rank)
+})
+
+write_tsv(
+  spike_windows,
+  "../output/reports/sarcopterygii_density_peaks_hsap.tsv"
+)
+print(spike_windows)
+
+# Plot the top window per target, padded so the surrounding gene context is
+# visible rather than only the peak itself.
+plot_span <- 4e6
+
+purrr::walk(unique(spike_windows$target), function(tg) {
+  win <- spike_windows %>% filter(target == tg, rank == 1)
+  if (!nrow(win)) {
+    return(invisible(NULL))
+  }
+
+  centre <- (win$start + win$end) / 2
+  chrom_len <- hsap_chrom_sizes[[win$chrom]]
+  from <- max(1, round(centre - plot_span / 2))
+  to <- min(chrom_len, round(centre + plot_span / 2))
+
+  plot_hsap_cne_locus(
+    cne_list = list(
+      `Sarcopterygii-specific` = hsap_cne_gr$sarcopterygii,
+      `Gnathostomata-conserved` = hsap_cne_gr$gnathostomata
+    ),
+    chrom = win$chrom,
+    start = from,
+    end = to,
+    filepath = file.path(hsap_gviz_dir, paste0(tg, "_cne_density.pdf")),
+    track_colours = list(
+      `Sarcopterygii-specific` = sarco_line,
+      `Gnathostomata-conserved` = verte_line
+    ),
+    txdb = hsap_txdb,
+    orgdb = hsap_orgdb,
+    density_bin = 50e3
+  )
+})
 
 
 ###############################################################################
@@ -282,63 +393,5 @@ for (i in seq_len(nrow(zooms))) {
     teleost_fill = teleost_line,
     verte_fill = verte_line,
     atac_fill = atac_line
-  )
-}
-
-###############################################################################
-### Gviz — GO:0007224 (smoothened signaling pathway) gene panels
-###############################################################################
-go_genes_gr <- readRDS("../output/great/gviz/GO0007224_genes.rds")
-assoc_smo_actino <- readRDS("../output/great/gviz/GO0007224_cnes_actino.rds")
-assoc_smo_gnatho <- readRDS("../output/great/gviz/GO0007224_cnes_gnatho.rds")
-
-# Relabel the GO gene/CNE objects to the same chr* scheme as the rest of `gr`.
-go_genes_gr <- relabel_seqlevels(go_genes_gr, genome)
-assoc_smo_actino <- relabel_seqlevels(assoc_smo_actino, genome)
-assoc_smo_gnatho <- relabel_seqlevels(assoc_smo_gnatho, genome)
-
-# Filter to autosomes so they line up with the precomputed `gr` set.
-go_genes_gr <- go_genes_gr[as.character(seqnames(go_genes_gr)) %in% autosomes]
-assoc_smo_actino <- assoc_smo_actino[
-  as.character(seqnames(assoc_smo_actino)) %in% autosomes
-]
-assoc_smo_gnatho <- assoc_smo_gnatho[
-  as.character(seqnames(assoc_smo_gnatho)) %in% autosomes
-]
-
-dir.create("../output/gviz_GO0007224", showWarnings = FALSE, recursive = TRUE)
-
-# Each plot centres on a gene body + 200 kb flank so the basal regulatory
-# domain is visible. plot_gviz_zoom already knows how to render `gr`'s tracks.
-flank_bp <- 200e3
-for (i in seq_along(go_genes_gr)) {
-  g <- go_genes_gr[i]
-  chr <- as.character(seqnames(g))
-  start <- max(1L, start(g) - flank_bp)
-  end <- end(g) + flank_bp
-  name <- mcols(g)$gene_id
-  if (is.null(name) || is.na(name) || !nzchar(name)) {
-    name <- paste0(chr, "_", start(g))
-  }
-  out <- file.path("../output/gviz_GO0007224", paste0(name, ".pdf"))
-
-  tryCatch(
-    plot_gviz_zoom(
-      gr = gr,
-      chr = chr,
-      start = start,
-      end = end,
-      filepath = out,
-      height = 10,
-      gene_activity = gene_activity,
-      active_col = "royalblue",
-      inactive_col = "skyblue",
-      teleost_fill = teleost_line,
-      verte_fill = verte_line,
-      atac_fill = atac_line
-    ),
-    error = function(e) {
-      message("Gviz failed for ", name, ": ", conditionMessage(e))
-    }
   )
 }

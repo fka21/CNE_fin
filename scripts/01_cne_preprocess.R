@@ -213,8 +213,67 @@ atac_peaks_gr <- GRanges(
 )
 
 ###############################################################################
+### 5b. EXON EXCLUSION                                                      ###
+###############################################################################
+# phastCons is run over the full alignment; the GFF passed to the workflow is
+# used for 4D-site extraction and neutral-model estimation, not as a mask, and
+# the classification step separates the clade sets without subtracting exons.
+# The BED files therefore contain conserved elements of any class, and coding
+# exons — being the most constrained sequence in the genome — are strongly
+# represented. Elements overlapping an annotated exon are removed here, by
+# coordinate, so that "non-coding" is enforced explicitly rather than emerging
+# as a by-product of which label ChIPseeker happens to assign to elements that
+# overlap several feature classes at once.
+
+exon_gr <- GenomicRanges::reduce(exons(drer_anno), ignore.strand = TRUE)
+
+drop_exonic <- function(gr) {
+  shared <- intersect(seqlevels(gr), seqlevels(exon_gr))
+  if (!length(shared)) {
+    stop(
+      "CNE and exon seqlevels do not intersect; check accession versioning.\n",
+      "  CNE:  ",
+      paste(head(seqlevels(gr), 3), collapse = ", "),
+      "\n  exon: ",
+      paste(head(seqlevels(exon_gr), 3), collapse = ", ")
+    )
+  }
+  gr <- GenomeInfoDb::keepSeqlevels(gr, shared, pruning.mode = "coarse")
+  subsetByOverlaps(
+    gr,
+    GenomeInfoDb::keepSeqlevels(exon_gr, shared, pruning.mode = "coarse"),
+    invert = TRUE,
+    ignore.strand = TRUE
+  )
+}
+
+exon_exclusion <- tibble(
+  set = c("actinopterygii_specific", "gnathostomata_conserved"),
+  n_input = c(length(actinopteriigy_cne_gr), length(gnathostomata_cne_gr))
+)
+
+actinopteriigy_cne_gr <- drop_exonic(actinopteriigy_cne_gr)
+gnathostomata_cne_gr <- drop_exonic(gnathostomata_cne_gr)
+
+exon_exclusion <- exon_exclusion %>%
+  mutate(
+    n_non_exonic = c(
+      length(actinopteriigy_cne_gr),
+      length(gnathostomata_cne_gr)
+    ),
+    n_removed = n_input - n_non_exonic,
+    percent_removed = round(100 * n_removed / n_input, 1)
+  )
+
+write_tsv(exon_exclusion, file.path(report_dir, "exon_exclusion_summary.tsv"))
+print(exon_exclusion)
+
+###############################################################################
 ### 6. ChIPseeker ANNOTATION + GENE-ACTIVITY JOIN                           ###
 ###############################################################################
+# Run on the already exon-free sets, so the annotation priority now only affects
+# how the remaining non-coding elements are described (promoter vs intron vs
+# distal) and no longer determines how many elements survive.
 
 peak_anno_list <- lapply(
   list(actinopteriigy_cne_gr, gnathostomata_cne_gr),
@@ -250,15 +309,19 @@ peak_anno_list <- lapply(peak_anno_list, function(anno_obj) {
 })
 
 # Element counts surviving the exon / expression filter, for the Methods.
+# Counts entering and leaving the annotation step. `n_non_exonic` is the input
+# after the coordinate-level exon exclusion above, so any further loss here is
+# attributable to non_exon() and to elements whose nearest gene has no
+# expression measurement, not to exon overlap.
 filter_summary <- tibble(
   set = c("actinopterygii_specific", "gnathostomata_conserved"),
-  n_input = c(length(actinopteriigy_cne_gr), length(gnathostomata_cne_gr)),
+  n_non_exonic = c(length(actinopteriigy_cne_gr), length(gnathostomata_cne_gr)),
   n_retained = c(
     length(peak_anno_list$actinopteriigy_CNE@anno),
     length(peak_anno_list$gnathostomata_CNE@anno)
   )
 ) %>%
-  mutate(percent_retained = round(100 * n_retained / n_input, 1))
+  mutate(percent_retained = round(100 * n_retained / n_non_exonic, 1))
 
 write_tsv(filter_summary, file.path(report_dir, "cne_filter_summary.tsv"))
 print(filter_summary)

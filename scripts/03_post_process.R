@@ -6,7 +6,8 @@ pacman::p_load(
   readxl,
   ComplexHeatmap,
   circlize,
-  GenomicFeatures
+  GenomicFeatures,
+  patchwork
 )
 
 setwd(this.path::here())
@@ -103,82 +104,45 @@ write.table(
 # directly, and 3R ohnologue pair members are shaded separately because each
 # paralogue carries its own domain.
 
-top_n_hotspots <- 25
+top_n_hotspots <- 20
 
-hotspot_plot_df <- hotspots %>%
-  filter(set == "actinopterygii", expected > 0, observed > 0) %>%
-  slice_min(fdr, n = top_n_hotspots, with_ties = FALSE) %>%
-  mutate(
-    gene = fct_reorder(gene, obs_exp),
-    duplicate_status = if_else(
-      is_ohnologue,
-      "3R ohnologue pair member",
-      "single-copy locus"
-    )
-  )
+actino_col <- "#CC79A7"
+gnatho_col <- "#009E73"
 
-p_hotspots <- ggplot(
-  hotspot_plot_df,
-  aes(gene, obs_exp, fill = duplicate_status)
+p_hotspots <- plot_hotspot_panel(
+  hotspots,
+  set_name = "actinopterygii",
+  fill_colour = actino_col,
+  top_n = top_n_hotspots,
+  title = "Actinopterygii-specific"
 ) +
-  geom_col(colour = "black", alpha = 0.85, width = 0.75) +
-  geom_hline(yintercept = 1, linetype = "dashed", colour = "grey40") +
-  geom_text(
-    aes(
-      label = paste0(
-        observed,
-        " CNE / ",
-        round(domain_width / 1e3),
-        " kb"
-      )
+  plot_hotspot_panel(
+    hotspots,
+    set_name = "gnathostomata",
+    fill_colour = gnatho_col,
+    top_n = top_n_hotspots,
+    title = "Gnathostomata-conserved"
+  ) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    tag_levels = "A",
+    caption = paste(
+      "Bar labels give observed CNEs / regulatory domain length.",
+      "Dashed line marks the domain-length expectation (obs/exp = 1)."
     ),
-    hjust = -0.08,
-    size = 2.6
-  ) +
-  coord_flip() +
-  scale_fill_manual(
-    values = c(
-      "3R ohnologue pair member" = "#E69F00",
-      "single-copy locus" = "grey75"
+    theme = theme(
+      plot.caption = element_text(hjust = 0, size = 8, colour = "grey30")
     )
-  ) +
-  expand_limits(y = max(hotspot_plot_df$obs_exp) * 1.3) +
-  theme_bw(base_size = 11) +
-  theme(legend.position = "bottom", panel.grid.major.y = element_blank()) +
-  labs(
-    x = NULL,
-    y = "Observed / expected CNEs per regulatory domain",
-    fill = NULL
-  )
+  ) &
+  theme(legend.position = "bottom")
 
 ggsave(
   "../output/cne_hotspots_domain_normalised.pdf",
   p_hotspots,
-  width = 7.5,
-  height = 8
+  width = 12,
+  height = 7
 )
 
-# Companion panel showing the size dependence that motivates the
-# normalisation: raw counts scale with domain length across all loci.
-p_size_bias <- hotspots %>%
-  filter(set == "actinopterygii", observed > 0) %>%
-  ggplot(aes(domain_width / 1e3, observed)) +
-  geom_point(alpha = 0.2, size = 0.9) +
-  geom_smooth(method = "lm", se = FALSE, colour = "#CC79A7", linewidth = 0.8) +
-  scale_x_log10() +
-  scale_y_log10() +
-  theme_bw(base_size = 11) +
-  labs(
-    x = "Regulatory domain length (kb)",
-    y = "CNEs per domain"
-  )
-
-ggsave(
-  "../output/cne_hotspots_size_bias.pdf",
-  p_size_bias,
-  width = 5,
-  height = 4
-)
 
 hotspot_size_correlation <- hotspots %>%
   filter(observed > 0) %>%
@@ -359,11 +323,15 @@ saveRDS(
 )
 
 ### --- UpSet sets ----------------------------------------------------------
-# The Chan enhancer and YueSong CNE sets are passed through so they appear as
-# membership columns in the UpSet matrix; without them the plot only contained
-# the ATAC and activity sets.
+# The Chan enhancer and YueSong CNE sets are still computed and written to the
+# final tables, but the UpSet panels are restricted to the accessibility and
+# gene-activity sets: those are the two independent lines of evidence for
+# regulatory potential, and the external CNE/enhancer sets overlap the universe
+# so sparsely that they compress the intersection bars.
 
 SLACK <- 0L # 0 for native coordinates, 50-200 bp for lifted-over sets
+
+UPSET_SETS <- c("ATAC peaks", "Active genes nearby")
 
 res_actino <- analyse_cne_universe(
   anno_gr = unique(anno_actino),
@@ -372,7 +340,8 @@ res_actino <- analyse_cne_universe(
   enh_gr = enh_gr,
   yuesong_gr = yuesong_gr,
   fin_geneIds = filtered_genes_fin,
-  slack = SLACK
+  slack = SLACK,
+  upset_sets = UPSET_SETS
 )
 
 res_gnatho <- analyse_cne_universe(
@@ -381,7 +350,8 @@ res_gnatho <- analyse_cne_universe(
   atac_peaks_gr = atac_peaks_gr,
   enh_gr = enh_gr,
   fin_geneIds = filtered_genes_fin,
-  slack = SLACK
+  slack = SLACK,
+  upset_sets = UPSET_SETS
 )
 
 ### --- Final tables for the Shiny app --------------------------------------

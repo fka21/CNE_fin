@@ -1,7 +1,0 @@
-annotation	n	frac_downstream	median_signed
-Promoter	970	0.8886597938144329	1181.5
-Intron	405	0.5580246913580247	5712
-5' UTR	230	0.7347826086956522	6608.5
-3' UTR	225	0.44	-2271
-Distal Intergenic	167	0.3473053892215569	-9582
-Downstream	5	0.6	6325

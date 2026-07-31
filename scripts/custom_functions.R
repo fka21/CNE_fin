@@ -1,3 +1,9 @@
+# Base R gained %||% in 4.4.0 and rlang exports it; define it only if neither
+# is in scope so the scripts run on older R.
+if (!exists("%||%")) {
+  `%||%` <- function(x, y) if (is.null(x)) y else x
+}
+
 # ---------- helper: stable IDs ----------
 gr_id <- function(gr, include_strand = FALSE) {
   if (!include_strand) {
@@ -274,7 +280,8 @@ analyse_cne_universe <- function(
   yuesong_gr = NULL,
   fin_geneIds = NULL,
   slack = 0L,
-  out_dir = '../output'
+  out_dir = '../output',
+  upset_sets = NULL
 ) {
   # 1. Universe
   universe_gr <- unique(non_exon(anno_gr))
@@ -328,8 +335,27 @@ analyse_cne_universe <- function(
 
   mem <- mem[, vapply(mem, any, logical(1)), drop = FALSE]
 
+  # `upset_sets` limits which membership columns are drawn. The exported table
+  # below still carries every column, so restricting the plot does not change
+  # what downstream scripts and the Shiny app read.
+  mem_plot <- if (is.null(upset_sets)) {
+    mem
+  } else {
+    wanted <- c(universe_col, upset_sets)
+    missing <- setdiff(wanted, names(mem))
+    if (length(missing)) {
+      warning(
+        "upset_sets not present for ",
+        label,
+        ": ",
+        paste(missing, collapse = ", ")
+      )
+    }
+    mem[, intersect(wanted, names(mem)), drop = FALSE]
+  }
+
   # 4. UpSet
-  comb <- make_comb_mat(as.matrix(mem + 0L))
+  comb <- make_comb_mat(as.matrix(mem_plot + 0L))
 
   pdf(
     file.path(out_dir, sprintf("upset_overlaps_%s.pdf", label)),
@@ -340,7 +366,7 @@ analyse_cne_universe <- function(
   draw(
     UpSet(
       comb,
-      set_order = colnames(mem),
+      set_order = colnames(mem_plot),
       top_annotation = upset_top_annotation(comb, add_numbers = TRUE),
       right_annotation = upset_right_annotation(comb, add_numbers = TRUE)
     )
@@ -661,6 +687,238 @@ flag_ohnologue_pairs <- function(hotspots) {
       ),
       is_ohnologue = !is.na(ohnologue_stem)
     )
+}
+
+
+# One panel of the hotspot figure. Kept as a function so the two CNE sets are
+# drawn by identical code and differ only in fill colour; the ohnologue flag is
+# carried on the bar outline rather than the fill so that a single colour legend
+# is shared when the panels are combined.
+plot_hotspot_panel <- function(
+  hotspots,
+  set_name,
+  fill_colour,
+  top_n = 20,
+  title = NULL,
+  label_size = 2.4
+) {
+  df <- hotspots |>
+    dplyr::filter(set == set_name, expected > 0, observed > 0) |>
+    dplyr::slice_min(fdr, n = top_n, with_ties = FALSE) |>
+    dplyr::mutate(
+      gene = forcats::fct_reorder(gene, obs_exp),
+      duplicate_status = dplyr::if_else(
+        is_ohnologue,
+        "3R ohnologue pair member",
+        "single-copy locus"
+      )
+    )
+
+  ggplot2::ggplot(df, ggplot2::aes(gene, obs_exp)) +
+    ggplot2::geom_col(
+      ggplot2::aes(colour = duplicate_status),
+      fill = fill_colour,
+      alpha = 0.85,
+      width = 0.75,
+      linewidth = 0.45
+    ) +
+    ggplot2::geom_hline(
+      yintercept = 1,
+      linetype = "dashed",
+      colour = "grey40"
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(
+        label = paste0(observed, " / ", round(domain_width / 1e3), " kb")
+      ),
+      hjust = -0.08,
+      size = label_size
+    ) +
+    ggplot2::coord_flip() +
+    ggplot2::scale_colour_manual(
+      values = c(
+        "3R ohnologue pair member" = "black",
+        "single-copy locus" = "grey55"
+      )
+    ) +
+    ggplot2::expand_limits(y = max(df$obs_exp) * 1.35) +
+    ggplot2::theme_bw(base_size = 10) +
+    ggplot2::theme(
+      legend.position = "bottom",
+      panel.grid.major.y = ggplot2::element_blank(),
+      plot.title = ggplot2::element_text(face = "bold", size = 11)
+    ) +
+    ggplot2::labs(
+      x = NULL,
+      y = "Observed / expected CNEs per regulatory domain",
+      colour = NULL,
+      title = title %||% set_name
+    )
+}
+
+
+# ── Human-coordinate CNE locus views ─────────────────────────────────────────
+
+# Locate the densest windows of a CNE set on one chromosome. `region` optionally
+# restricts the search, which is how the telomeric windows are selected without
+# hard-coding coordinates that would change with the element set.
+find_cne_spikes <- function(
+  gr,
+  chrom,
+  bin_size = 1e6,
+  region = NULL,
+  n = 3,
+  chrom_length = NULL
+) {
+  x <- gr[as.character(seqnames(gr)) == chrom]
+  if (!length(x)) {
+    return(tibble::tibble())
+  }
+
+  sl <- seqlengths(gr)
+  end_pos <- chrom_length
+  if (is.null(end_pos) && chrom %in% names(sl)) {
+    end_pos <- unname(sl[[chrom]])
+  }
+  if (is.null(end_pos) || is.na(end_pos)) {
+    end_pos <- max(end(x))
+  }
+
+  starts <- seq(1, end_pos, by = bin_size)
+  bins <- GRanges(
+    chrom,
+    IRanges(starts, pmin(starts + bin_size - 1L, end_pos))
+  )
+
+  if (!is.null(region)) {
+    bins <- bins[start(bins) >= region[1] & end(bins) <= region[2]]
+  }
+  if (!length(bins)) {
+    return(tibble::tibble())
+  }
+
+  tibble::tibble(
+    chrom = chrom,
+    start = start(bins),
+    end = end(bins),
+    n_cne = countOverlaps(bins, x, ignore.strand = TRUE)
+  ) |>
+    dplyr::arrange(dplyr::desc(n_cne)) |>
+    dplyr::slice_head(n = n)
+}
+
+
+# Gviz panel for a human locus: binned density of each CNE set above the
+# individual elements, with gene models underneath for context. Density is what
+# makes a spike legible at megabase scale; the element track shows that the
+# spike is many elements rather than a few wide ones.
+plot_hsap_cne_locus <- function(
+  cne_list,
+  chrom,
+  start,
+  end,
+  filepath,
+  track_colours,
+  txdb = NULL,
+  orgdb = NULL,
+  density_bin = 50e3,
+  width = 10,
+  height = 7
+) {
+  suppressPackageStartupMessages(library(Gviz))
+
+  roi <- GRanges(chrom, IRanges(start, end))
+  n_bins <- max(1L, ceiling((end - start + 1) / density_bin))
+  bin_starts <- seq(start, end, length.out = n_bins + 1)
+  bins <- GRanges(
+    chrom,
+    IRanges(
+      round(head(bin_starts, -1)),
+      round(tail(bin_starts, -1)) - 1L
+    )
+  )
+
+  tracks <- list(GenomeAxisTrack())
+
+  for (nm in names(cne_list)) {
+    x <- cne_list[[nm]]
+    x <- x[as.character(seqnames(x)) == chrom]
+
+    tracks <- c(
+      tracks,
+      DataTrack(
+        range = bins,
+        data = countOverlaps(bins, x, ignore.strand = TRUE),
+        type = "histogram",
+        name = paste0(nm, "\nper ", round(density_bin / 1e3), " kb"),
+        col.histogram = track_colours[[nm]],
+        fill.histogram = track_colours[[nm]],
+        background.title = "grey30"
+      ),
+      AnnotationTrack(
+        subsetByOverlaps(x, roi, ignore.strand = TRUE),
+        chromosome = chrom,
+        name = nm,
+        fill = track_colours[[nm]],
+        col = track_colours[[nm]],
+        stacking = "dense",
+        background.title = "grey30"
+      )
+    )
+  }
+
+  if (!is.null(txdb)) {
+    grt <- tryCatch(
+      {
+        g <- GeneRegionTrack(
+          txdb,
+          chromosome = chrom,
+          start = start,
+          end = end,
+          name = "Genes",
+          background.title = "grey30"
+        )
+        if (!is.null(orgdb) && length(gene(g))) {
+          sym <- suppressMessages(AnnotationDbi::mapIds(
+            orgdb,
+            keys = sub("\\..*$", "", gene(g)),
+            keytype = "ENTREZID",
+            column = "SYMBOL"
+          ))
+          symbol(g) <- ifelse(is.na(sym), gene(g), sym)
+        }
+        g
+      },
+      error = function(e) {
+        message("Gene track unavailable for ", chrom, ": ", conditionMessage(e))
+        NULL
+      }
+    )
+    if (!is.null(grt)) {
+      tracks <- c(tracks, grt)
+    }
+  }
+
+  pdf(filepath, width = width, height = height)
+  on.exit(dev.off(), add = TRUE)
+  plotTracks(
+    tracks,
+    from = start,
+    to = end,
+    chromosome = chrom,
+    transcriptAnnotation = "symbol",
+    collapseTranscripts = "meta",
+    shape = "arrow",
+    main = sprintf(
+      "%s:%.2f-%.2f Mb",
+      chrom,
+      start / 1e6,
+      end / 1e6
+    ),
+    cex.main = 0.9
+  )
+
+  invisible(roi)
 }
 
 
