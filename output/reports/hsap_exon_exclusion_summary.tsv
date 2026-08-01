@@ -1,0 +1,3 @@
+set	reference	n_input	n_non_exonic	n_removed	percent_removed
+sarcopterygii	hsap	5200	991	4209	80.9
+gnathostomata	hsap	19093	1961	17132	89.7

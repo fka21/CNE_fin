@@ -106,6 +106,12 @@ write.table(
 
 top_n_hotspots <- 20
 
+hotspots <- hotspots %>%
+  filter(
+    str_detect(gene, "LOC", negate = T),
+    str_detect(gene, 'si:', negate = T)
+  )
+
 actino_col <- "#CC79A7"
 gnatho_col <- "#009E73"
 

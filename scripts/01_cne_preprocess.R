@@ -227,21 +227,21 @@ atac_peaks_gr <- GRanges(
 
 exon_gr <- GenomicRanges::reduce(exons(drer_anno), ignore.strand = TRUE)
 
-drop_exonic <- function(gr) {
-  shared <- intersect(seqlevels(gr), seqlevels(exon_gr))
+drop_exonic <- function(gr, exons_gr) {
+  shared <- intersect(seqlevels(gr), seqlevels(exons_gr))
   if (!length(shared)) {
     stop(
       "CNE and exon seqlevels do not intersect; check accession versioning.\n",
       "  CNE:  ",
       paste(head(seqlevels(gr), 3), collapse = ", "),
       "\n  exon: ",
-      paste(head(seqlevels(exon_gr), 3), collapse = ", ")
+      paste(head(seqlevels(exons_gr), 3), collapse = ", ")
     )
   }
   gr <- GenomeInfoDb::keepSeqlevels(gr, shared, pruning.mode = "coarse")
   subsetByOverlaps(
     gr,
-    GenomeInfoDb::keepSeqlevels(exon_gr, shared, pruning.mode = "coarse"),
+    GenomeInfoDb::keepSeqlevels(exons_gr, shared, pruning.mode = "coarse"),
     invert = TRUE,
     ignore.strand = TRUE
   )
@@ -252,8 +252,8 @@ exon_exclusion <- tibble(
   n_input = c(length(actinopteriigy_cne_gr), length(gnathostomata_cne_gr))
 )
 
-actinopteriigy_cne_gr <- drop_exonic(actinopteriigy_cne_gr)
-gnathostomata_cne_gr <- drop_exonic(gnathostomata_cne_gr)
+actinopteriigy_cne_gr <- drop_exonic(actinopteriigy_cne_gr, exon_gr)
+gnathostomata_cne_gr <- drop_exonic(gnathostomata_cne_gr, exon_gr)
 
 exon_exclusion <- exon_exclusion %>%
   mutate(
@@ -346,21 +346,15 @@ write.table(
 ###############################################################################
 ### 7. SARCOPTERYGII-SPECIFIC SET (HUMAN COORDINATES)                       ###
 ###############################################################################
-# The third phastCons round is referenced to human, so this set cannot be
-# projected onto the zebrafish annotation used above: tetrapod-specific
-# elements are by definition largely absent from the zebrafish assembly. It is
-# therefore carried in its own coordinate space and reported alongside the
-# gnathostome set called on the same human reference, which is the symmetric
-# comparison. Only the descriptive products (element counts, widths, chromosomal
-# distribution) are shared between the two coordinate spaces.
 
 hsap_files <- list(
   sarcopterygii = "../input/sarcopterygii_specific_hsap.bed",
   gnathostomata = "../input/gnathostomata_conserved_hsap.bed"
 )
 hsap_sizes_file <- "../ancilliary_files/hsap_chrom_info.txt"
+hsap_gff_file <- "../ancilliary_files/hsap.gff"
 
-if (all(file.exists(unlist(hsap_files), hsap_sizes_file))) {
+if (all(file.exists(unlist(hsap_files), hsap_sizes_file, hsap_gff_file))) {
   hsap_sizes <- read_tsv(
     hsap_sizes_file,
     col_names = c("chrom", "length"),
@@ -371,6 +365,45 @@ if (all(file.exists(unlist(hsap_files), hsap_sizes_file))) {
 
   hsap_cne_gr <- lapply(hsap_files, read_cne_bed)
   hsap_cne_gr <- lapply(hsap_cne_gr, inject_seqlengths, sizes = hsap_sizes)
+
+  # Human exon set, built from a human GFF on the same assembly the human CNEs
+  # were called against. drop_exonic() is reused unchanged; it intersects
+  # seqlevels itself, so a versioning mismatch stops with a clear error rather
+  # than silently removing nothing.
+  hsap_txdb <- txdbmaker::makeTxDbFromGFF(
+    hsap_gff_file,
+    organism = "Homo sapiens"
+  )
+  hsap_exon_gr <- GenomicRanges::reduce(
+    exons(hsap_txdb),
+    ignore.strand = TRUE
+  )
+
+  hsap_exon_exclusion <- imap_dfr(hsap_cne_gr, function(gr, nm) {
+    tibble(set = nm, reference = "hsap", n_input = length(gr))
+  })
+
+  hsap_cne_gr$sarcopterygii <- drop_exonic(
+    hsap_cne_gr$sarcopterygii,
+    exons_gr = hsap_exon_gr
+  )
+  hsap_cne_gr$gnathostomata <- drop_exonic(
+    hsap_cne_gr$gnathostomata,
+    exons_gr = hsap_exon_gr
+  )
+
+  hsap_exon_exclusion <- hsap_exon_exclusion %>%
+    mutate(
+      n_non_exonic = vapply(hsap_cne_gr, length, integer(1)),
+      n_removed = n_input - n_non_exonic,
+      percent_removed = round(100 * n_removed / n_input, 1)
+    )
+
+  write_tsv(
+    hsap_exon_exclusion,
+    file.path(report_dir, "hsap_exon_exclusion_summary.tsv")
+  )
+  print(hsap_exon_exclusion)
 
   saveRDS(hsap_cne_gr, file.path(preproc_dir, "hsap_cne_gr.rds"))
   saveRDS(hsap_sizes, file.path(preproc_dir, "hsap_sizes.rds"))
@@ -389,9 +422,12 @@ if (all(file.exists(unlist(hsap_files), hsap_sizes_file))) {
   print(hsap_summary)
 } else {
   message(
-    "Human-coordinate CNE BEDs not found; skipping the sarcopterygii set.\n",
+    "Human-coordinate CNE BEDs / GFF not found; skipping the sarcopterygii set.\n",
     "  Expected: ",
-    paste(c(unlist(hsap_files), hsap_sizes_file), collapse = ", ")
+    paste(
+      c(unlist(hsap_files), hsap_sizes_file, hsap_gff_file),
+      collapse = ", "
+    )
   )
 }
 
