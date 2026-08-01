@@ -376,3 +376,41 @@ write.table(
   quote = FALSE,
   row.names = FALSE
 )
+
+### --- Sarcopterygii / human final table -----------------------------------
+# The human sets carry no ATAC, activity, or fin-gene annotation (those data are
+# zebrafish), so this is the descriptive table only: coordinates, width, and
+# phastCons score per element, matching the columns the human sets actually have.
+
+hsap_cne_path <- file.path(preproc_dir, "hsap_cne_gr.rds")
+
+if (file.exists(hsap_cne_path)) {
+  hsap_cne_gr <- readRDS(hsap_cne_path)
+
+  hsap_final <- imap_dfr(hsap_cne_gr, function(gr, nm) {
+    as.data.frame(gr) %>%
+      mutate(set = nm, .before = 1)
+  })
+
+  write.table(
+    hsap_final,
+    "../output/hsap_cne_final_table.tsv",
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+  )
+
+  # Sarcopterygii-specific set on its own, to mirror the per-set zebrafish files.
+  write.table(
+    filter(hsap_final, set == "sarcopterygii"),
+    "../output/sarcopterygii_specific_cne_final_table.tsv",
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+  )
+} else {
+  message(
+    "hsap_cne_gr.rds not found; skipping the sarcopterygii final table. ",
+    "Run script 1 with the human inputs present first."
+  )
+}
